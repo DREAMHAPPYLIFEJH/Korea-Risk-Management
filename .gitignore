@@ -1,0 +1,42 @@
+# 환경 변수 (비밀키 포함)
+.env
+.env.local
+.env.*.local
+
+# 키움 발급 키 파일
+*appkey*.txt
+*secretkey*.txt
+
+# 키움 저작권 자료 (배포 금지)
+키움 REST API 문서.pdf
+API개발명세서_*.xls
+API개발명세서_*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 데이터 캐시
+data/cache/
+data/state.json
+*.parquet
+*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

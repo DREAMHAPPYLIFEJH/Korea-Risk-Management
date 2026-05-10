@@ -1,0 +1,1548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KOSPI Risk Intelligence Dashboard — System Design Document</title>
+<style>
+  @page {
+    size: A4;
+    margin: 16mm;
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  :root {
+    --color-safe:     #2ecc71;
+    --color-caution:  #a8d672;
+    --color-alert:    #f1c40f;
+    --color-danger:   #e67e22;
+    --color-extreme:  #e74c3c;
+    --color-accent:   #2c3e50;
+    --color-mid:      #34495e;
+    --color-light:    #ecf0f1;
+    --color-border:   #c8d3db;
+    --color-text:     #1a2733;
+    --color-muted:    #5d6d7e;
+    --color-bg:       #ffffff;
+    --color-section-bg: #f7f9fb;
+    --font-body:      -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    --font-mono:      'Courier New', 'Consolas', monospace;
+    --font-sans:      'Arial', 'Helvetica Neue', sans-serif;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #e8edf2;
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: 10.5pt;
+    line-height: 1.65;
+  }
+
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 12mm auto;
+    background: var(--color-bg);
+    padding: 16mm;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.13);
+  }
+
+  @media print {
+    html, body { background: white; }
+    .page {
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      box-shadow: none;
+    }
+  }
+
+  /* ── TITLE BLOCK ── */
+  .doc-title-block {
+    border-top: 4px solid var(--color-accent);
+    padding-top: 14px;
+    margin-bottom: 24px;
+  }
+
+  .doc-title {
+    font-family: var(--font-sans);
+    font-size: 19pt;
+    font-weight: 700;
+    color: var(--color-accent);
+    line-height: 1.25;
+    margin: 0 0 10px 0;
+    letter-spacing: -0.3px;
+  }
+
+  .doc-meta {
+    display: flex;
+    gap: 28px;
+    font-family: var(--font-sans);
+    font-size: 8.5pt;
+    color: var(--color-muted);
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .doc-meta span strong {
+    color: var(--color-mid);
+  }
+
+  /* ── POSITIONING CALLOUT ── */
+  .positioning-callout {
+    background: linear-gradient(135deg, #1a2733 0%, #2c3e50 100%);
+    color: #ecf0f1;
+    border-left: 5px solid var(--color-alert);
+    border-radius: 4px;
+    padding: 14px 18px;
+    margin: 20px 0 24px 0;
+    font-family: var(--font-sans);
+    font-size: 9.5pt;
+    line-height: 1.6;
+    page-break-inside: avoid;
+  }
+
+  .positioning-callout .callout-label {
+    font-size: 7.5pt;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--color-alert);
+    font-weight: 700;
+    margin-bottom: 6px;
+    display: block;
+  }
+
+  /* ── TABLE OF CONTENTS ── */
+  .toc {
+    background: var(--color-section-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 14px 18px;
+    margin-bottom: 28px;
+    page-break-inside: avoid;
+  }
+
+  .toc-title {
+    font-family: var(--font-sans);
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--color-accent);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0 0 10px 0;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding-left: 20px;
+    columns: 2;
+    column-gap: 24px;
+  }
+
+  .toc ol li {
+    font-family: var(--font-sans);
+    font-size: 8.5pt;
+    color: var(--color-mid);
+    margin-bottom: 3px;
+    break-inside: avoid;
+  }
+
+  .toc ol li a {
+    color: var(--color-mid);
+    text-decoration: none;
+  }
+
+  .toc ol li a:hover {
+    color: var(--color-accent);
+    text-decoration: underline;
+  }
+
+  /* ── SECTION BLOCKS ── */
+  .section {
+    margin-bottom: 32px;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    border-bottom: 2px solid var(--color-accent);
+    padding-bottom: 5px;
+    margin-bottom: 14px;
+  }
+
+  .section-number {
+    font-family: var(--font-sans);
+    font-size: 14pt;
+    font-weight: 700;
+    color: var(--color-accent);
+    min-width: 28px;
+  }
+
+  .section-title {
+    font-family: var(--font-sans);
+    font-size: 12.5pt;
+    font-weight: 700;
+    color: var(--color-accent);
+    margin: 0;
+  }
+
+  /* ── SUBSECTION ── */
+  .subsection {
+    margin-bottom: 20px;
+    page-break-inside: avoid;
+  }
+
+  .subsection-title {
+    font-family: var(--font-sans);
+    font-size: 9.5pt;
+    font-weight: 700;
+    color: var(--color-mid);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin: 0 0 8px 0;
+    padding: 5px 0 5px 10px;
+    border-left: 3px solid var(--color-border);
+  }
+
+  /* ── TABLES ── */
+  .table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    margin-bottom: 4px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-sans);
+    font-size: 8.5pt;
+    table-layout: fixed;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+
+  thead tr {
+    background: var(--color-accent);
+    color: #ffffff;
+  }
+
+  thead th {
+    padding: 7px 10px;
+    text-align: left;
+    font-weight: 700;
+    font-size: 8pt;
+    letter-spacing: 0.3px;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+
+  tbody tr:nth-child(even) {
+    background: #f4f7fa;
+  }
+
+  tbody tr:nth-child(odd) {
+    background: #ffffff;
+  }
+
+  tbody tr:hover {
+    background: #eaf0f6;
+  }
+
+  td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: top;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  td strong, th strong {
+    font-weight: 700;
+  }
+
+  /* risk band row colours */
+  tr.band-safe td:first-child    { border-left: 3px solid var(--color-safe); }
+  tr.band-caution td:first-child { border-left: 3px solid var(--color-caution); }
+  tr.band-alert td:first-child   { border-left: 3px solid var(--color-alert); }
+  tr.band-danger td:first-child  { border-left: 3px solid var(--color-danger); }
+  tr.band-extreme td:first-child { border-left: 3px solid var(--color-extreme); }
+
+  tr.band-low td:first-child      { border-left: 3px solid var(--color-safe); }
+  tr.band-medium td:first-child   { border-left: 3px solid var(--color-alert); }
+  tr.band-high td:first-child     { border-left: 3px solid var(--color-danger); }
+  tr.band-critical td:first-child { border-left: 3px solid var(--color-extreme); }
+
+  /* score band badge */
+  .badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 7.5pt;
+    font-weight: 700;
+    font-family: var(--font-sans);
+    white-space: nowrap;
+  }
+  .badge-safe    { background: #d4f5e0; color: #1a7a41; }
+  .badge-caution { background: #e8f5c4; color: #5a6e10; }
+  .badge-alert   { background: #fef9c3; color: #7a6000; }
+  .badge-danger  { background: #fde8cc; color: #7a3800; }
+  .badge-extreme { background: #fdd5d2; color: #7a1000; }
+
+  /* ── PREFORMATTED / DIAGRAM BLOCKS ── */
+  pre {
+    background: #f4f6f8;
+    border: 1px solid var(--color-border);
+    border-left: 3px solid var(--color-accent);
+    border-radius: 3px;
+    padding: 12px 14px;
+    font-family: var(--font-mono);
+    font-size: 8pt;
+    line-height: 1.55;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    margin: 0 0 8px 0;
+    page-break-inside: avoid;
+  }
+
+  /* ── HIGHLIGHTED CALLOUT BLOCKS ── */
+  .callout {
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    font-family: var(--font-sans);
+    font-size: 8.5pt;
+    page-break-inside: avoid;
+  }
+
+  .callout-pipeline {
+    background: #eaf3fb;
+    border-left: 4px solid #2980b9;
+  }
+
+  .callout-arch {
+    background: #edf7f2;
+    border-left: 4px solid var(--color-safe);
+  }
+
+  .callout-macro {
+    background: #fef6e7;
+    border-left: 4px solid var(--color-danger);
+  }
+
+  .callout-score {
+    background: #fdfbe8;
+    border-left: 4px solid var(--color-alert);
+  }
+
+  .callout-error {
+    background: #fff0f0;
+    border-left: 4px solid var(--color-extreme);
+  }
+
+  .callout-conclusion {
+    background: #f0f4f8;
+    border-left: 4px solid var(--color-accent);
+  }
+
+  .callout-label-inline {
+    font-size: 7.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    display: block;
+    margin-bottom: 5px;
+    opacity: 0.75;
+  }
+
+  /* ── FINAL STATEMENT ── */
+  .final-statement {
+    text-align: center;
+    font-family: var(--font-sans);
+    font-size: 10pt;
+    font-style: italic;
+    font-weight: 600;
+    color: var(--color-accent);
+    border-top: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border);
+    padding: 12px 0;
+    margin: 20px 0 0 0;
+    page-break-inside: avoid;
+  }
+
+  /* ── RULE SEPARATOR ── */
+  hr {
+    border: none;
+    border-top: 1px solid var(--color-border);
+    margin: 28px 0;
+  }
+
+  /* ── APPENDIX ── */
+  .appendix-header {
+    font-family: var(--font-sans);
+    font-size: 11pt;
+    font-weight: 700;
+    color: var(--color-muted);
+    border-bottom: 1px dashed var(--color-border);
+    padding-bottom: 5px;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+
+  /* ── WEIGHT BADGE ── */
+  .weight {
+    display: inline-block;
+    background: var(--color-accent);
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: 7.5pt;
+    font-weight: 700;
+    padding: 1px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  /* ── PHASE BADGE ── */
+  .phase-current {
+    background: #d4f5e0;
+    color: #1a7a41;
+    font-family: var(--font-sans);
+    font-size: 7.5pt;
+    font-weight: 700;
+    padding: 1px 8px;
+    border-radius: 10px;
+  }
+
+  /* ── INLINE CODE ── */
+  code {
+    font-family: var(--font-mono);
+    font-size: 8pt;
+    background: #eef1f4;
+    padding: 1px 4px;
+    border-radius: 2px;
+    color: #c0392b;
+  }
+
+  /* ── FORMULA BLOCK ── */
+  .formula-block {
+    background: #fdfbe8;
+    border: 1px solid #e8de88;
+    border-left: 4px solid var(--color-alert);
+    border-radius: 3px;
+    padding: 12px 16px;
+    font-family: var(--font-mono);
+    font-size: 8.5pt;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin-bottom: 8px;
+    page-break-inside: avoid;
+  }
+
+  p {
+    margin: 0 0 8px 0;
+    font-size: 9pt;
+    color: var(--color-text);
+  }
+
+  /* ── KOREAN SECONDARY TEXT ── */
+  .kr {
+    font-size: 0.78em;
+    font-weight: 400;
+    opacity: 0.52;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* column width hints */
+  .col-w20 { width: 20%; }
+  .col-w25 { width: 25%; }
+  .col-w30 { width: 30%; }
+  .col-w35 { width: 35%; }
+  .col-w40 { width: 40%; }
+  .col-w50 { width: 50%; }
+  .col-w15 { width: 15%; }
+  .col-w10 { width: 10%; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ══════════════════════════════════════════════
+       TITLE BLOCK
+  ══════════════════════════════════════════════ -->
+  <div class="doc-title-block">
+    <h1 class="doc-title">KOSPI Risk Intelligence Dashboard / <span class="kr">KOSPI 리스크 인텔리전스 대시보드</span><br>System Design Document / <span class="kr">시스템 설계 문서</span></h1>
+    <div class="doc-meta">
+      <span><strong>Version:</strong> 1.0</span>
+      <span><strong>Status:</strong> Design</span>
+      <span><strong>Scope:</strong> End-to-end pipeline from raw market data to investor insight</span>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       POSITIONING CALLOUT
+  ══════════════════════════════════════════════ -->
+  <div class="positioning-callout">
+    <span class="callout-label">Design Intent / 설계 의도</span>
+    The KOSPI Risk Intelligence Dashboard is a deterministic, end-to-end risk analysis system that converts raw KOSPI market data into a single auditable risk score, a directly actionable investment strategy, and natural-language insight — with no manual interpretation required at any stage.
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       TABLE OF CONTENTS
+  ══════════════════════════════════════════════ -->
+  <div class="toc">
+    <div class="toc-title">Table of Contents / 목차</div>
+    <ol>
+      <li><a href="#s1">System Overview / 시스템 개요</a></li>
+      <li><a href="#s2">Architecture / 아키텍처</a></li>
+      <li><a href="#s3">Data Pipeline / 데이터 파이프라인</a></li>
+      <li><a href="#s4">Risk Models / 리스크 모델</a></li>
+      <li><a href="#s5">Macro Risk Model / 매크로 리스크 모델</a></li>
+      <li><a href="#s6">Scoring Engine / 점수화 엔진</a></li>
+      <li><a href="#s7">Strategy Engine / 전략 매핑 엔진</a></li>
+      <li><a href="#s8">Alert System / 알림 시스템</a></li>
+      <li><a href="#s9">Insight Generator / 인사이트 생성기</a></li>
+      <li><a href="#s10">Dashboard / 대시보드</a></li>
+      <li><a href="#s11">Error Handling &amp; Robustness / 오류 처리 및 안정성</a></li>
+      <li><a href="#s12">Extensibility / 확장성</a></li>
+      <li><a href="#s13">Conclusion / 결론</a></li>
+    </ol>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 1 — SYSTEM OVERVIEW
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s1">
+    <div class="section-header">
+      <span class="section-number">1</span>
+      <h2 class="section-title">System Overview / <span class="kr">시스템 개요</span></h2>
+    </div>
+
+    <p>This system is designed as a deterministic investment decision engine, not a conventional analytics dashboard.</p>
+
+    <!-- 1.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">1.1 &nbsp;Design Intent / <span class="kr">설계 의도</span></h3>
+      <p>KOSPI market data is widely available, but structured risk interpretation and the translation of that interpretation into investment action are not. This system exists to close that gap — converting raw indicators into an explainable, deterministic risk signal and a directly actionable strategy, without requiring manual interpretation at any stage.</p>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w35"><col class="col-w65"></colgroup>
+          <thead><tr><th>Design Principle</th><th>Rationale</th></tr></thead>
+          <tbody>
+            <tr><td>Deterministic, rules-based</td><td>Investment decisions require traceable, reproducible reasoning; no probabilistic inference</td></tr>
+            <tr><td>Independent risk models</td><td>Isolates failure domains; each model is auditable and replaceable in isolation</td></tr>
+            <tr><td>Layered, market-agnostic architecture</td><td>Only data sources and thresholds vary per market; the pipeline core is fully reusable</td></tr>
+            <tr><td>Score-to-strategy direct mapping</td><td>Eliminates interpretive gaps between risk measurement and portfolio action</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 1.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">1.2 &nbsp;Core Pipeline / <span class="kr">핵심 파이프라인</span></h3>
+      <div class="callout callout-pipeline">
+        <span class="callout-label-inline" style="color:#2980b9;">End-to-End Pipeline</span>
+        <pre style="background:transparent;border:none;padding:0;margin:0;font-size:9pt;color:#1a2733;">Raw Data  →  Indicators  →  Risk Levels  →  Composite Score  →  Strategy  →  Insights</pre>
+      </div>
+    </div>
+
+    <!-- 1.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">1.3 &nbsp;Key Design Decisions / <span class="kr">주요 설계 결정</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w25"><col class="col-w25"><col class="col-w50"></colgroup>
+          <thead><tr><th>Decision</th><th>Choice</th><th>Rationale</th></tr></thead>
+          <tbody>
+            <tr><td>Risk evaluation</td><td>Independent per model</td><td>Prevents cross-contamination; each model is auditable</td></tr>
+            <tr><td>Score aggregation</td><td>Weighted sum with dynamic weights</td><td>Market-regime-aware; deterministic</td></tr>
+            <tr><td>Strategy mapping</td><td>Score-band lookup table</td><td>Zero ambiguity; no model inference</td></tr>
+            <tr><td>Insight generation</td><td>Rule-match over condition table</td><td>Reproducible; same inputs always produce same output</td></tr>
+            <tr><td>Fallback on data failure</td><td>Hold last valid value + flag</td><td>Prevents cascading null propagation</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 1.4 -->
+    <div class="subsection">
+      <h3 class="subsection-title">1.4 &nbsp;System Constraints / <span class="kr">시스템 제약</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w40"><col class="col-w60"></colgroup>
+          <thead><tr><th>Constraint</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>Data granularity</td><td>Daily (end-of-day only)</td></tr>
+            <tr><td>Market coverage</td><td>KOSPI (Phase 1)</td></tr>
+            <tr><td>Minimum history</td><td>120 trading days for full indicator set</td></tr>
+            <tr><td>Score precision</td><td>2 decimal places</td></tr>
+            <tr><td>Update cadence</td><td>Once per trading day, post-market close</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 1.5 -->
+    <div class="subsection">
+      <h3 class="subsection-title">1.5 &nbsp;Non-Goals / <span class="kr">비목표</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w30"><col class="col-w70"></colgroup>
+          <thead><tr><th>Category</th><th>Out of Scope</th></tr></thead>
+          <tbody>
+            <tr><td>Data updates</td><td>Real-time intraday updates (Phase 4 roadmap)</td></tr>
+            <tr><td>Strategy generation</td><td>AI/LLM-based recommendations (Phase 5 roadmap)</td></tr>
+            <tr><td>Configuration</td><td>User-configurable weight overrides</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 2 — ARCHITECTURE
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s2">
+    <div class="section-header">
+      <span class="section-number">2</span>
+      <h2 class="section-title">Architecture / <span class="kr">아키텍처</span></h2>
+    </div>
+
+    <!-- 2.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">2.1 &nbsp;Layered Architecture / <span class="kr">계층형 아키텍처</span></h3>
+      <div class="callout callout-arch">
+        <span class="callout-label-inline" style="color:#1a7a41;">7-Layer Pipeline</span>
+<pre style="background:transparent;border:none;padding:0;margin:0;">┌──────────────────────────────────────────────────────┐
+│  Layer 7 — Visualization                             │
+│  Gauge · Radar · Time-Series · Pie · Alert Banners   │
+├──────────────────────────────────────────────────────┤
+│  Layer 6 — Insight Layer                             │
+│  Rule-match engine · Deduplication · Priority sort   │
+├──────────────────────────────────────────────────────┤
+│  Layer 5 — Strategy Layer                            │
+│  Score-band lookup · Asset allocation · Override     │
+├──────────────────────────────────────────────────────┤
+│  Layer 4 — Scoring Layer                             │
+│  Weighted sum · Dynamic weight selector · Thresholds │
+├──────────────────────────────────────────────────────┤
+│  Layer 3 — Risk Layer (5 independent models)         │
+│  Market · Volatility · Liquidity · Downside · Macro  │
+├──────────────────────────────────────────────────────┤
+│  Layer 2 — Indicator Layer                           │
+│  MA · Disparity · HV · MDD · VaR · Volume Ratio      │
+├──────────────────────────────────────────────────────┤
+│  Layer 1 — Data Layer                                │
+│  Collection · Cleansing · Normalization              │
+└──────────────────────────────────────────────────────┘</pre>
+      </div>
+    </div>
+
+    <!-- 2.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">2.2 &nbsp;Data Flow / <span class="kr">데이터 흐름</span></h3>
+<pre>[Exchange/API] ──► [Collect] ──► [Clean] ──► [Indicators]
+                                                   │
+                    ┌──────────────────────────────┼──────────────────┐
+                    ▼                              ▼                  ▼
+             [Market Risk]               [Volatility Risk]    [Macro Risk]
+             [Liquidity Risk]            [Downside Risk]
+                    └──────────────────────────────┼──────────────────┘
+                                                   ▼
+                                          [Scoring Engine]
+                                                   │
+                                          [Strategy Engine]
+                                          ┌─────────┴─────────┐
+                                          ▼                   ▼
+                                  [Insight Gen.]       [Alert System]
+                                          └─────────┬─────────┘
+                                                    ▼
+                                             [Dashboard]</pre>
+    </div>
+
+    <!-- 2.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">2.3 &nbsp;Processing Trigger / <span class="kr">처리 트리거</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w25"><col class="col-w75"></colgroup>
+          <thead><tr><th>Property</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td>Trigger</td><td>Market close each trading day</td></tr>
+            <tr><td>Sequence</td><td>Collect → Clean → Indicators → Risk Models → Score → Strategy → Insights → Dashboard</td></tr>
+            <tr><td>Execution</td><td>Sequential; all risk models share the same computed indicator set</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 2.4 -->
+    <div class="subsection">
+      <h3 class="subsection-title">2.4 &nbsp;Architectural Rationale / <span class="kr">아키텍처 근거</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w35"><col class="col-w65"></colgroup>
+          <thead><tr><th>Principle</th><th>Consequence</th></tr></thead>
+          <tbody>
+            <tr><td>Separation of concerns</td><td>Each layer has a single responsibility; failures do not cross layer boundaries</td></tr>
+            <tr><td>Unidirectional data flow</td><td>No feedback loops; execution is fully deterministic and traceable end-to-end</td></tr>
+            <tr><td>Independent risk models</td><td>Models share indicators but never grades; isolation and auditability are structural guarantees</td></tr>
+            <tr><td>Market-agnostic core</td><td>Layers 2–7 contain no market-specific logic; only Layer 1 is market-dependent</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 3 — DATA PIPELINE
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s3">
+    <div class="section-header">
+      <span class="section-number">3</span>
+      <h2 class="section-title">Data Pipeline / <span class="kr">데이터 파이프라인</span></h2>
+    </div>
+
+    <!-- 3.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">3.1 &nbsp;Data Collection / <span class="kr">데이터 수집</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w35"><col class="col-w40"><col class="col-w25"></colgroup>
+          <thead><tr><th>Data Item</th><th>Source</th><th>Frequency</th></tr></thead>
+          <tbody>
+            <tr><td>KOSPI OHLCV</td><td>Exchange / Market API</td><td>Daily</td></tr>
+            <tr><td>Trading volume / value</td><td>Exchange</td><td>Daily</td></tr>
+            <tr><td>KRW/USD exchange rate</td><td>Bank of Korea / FX API</td><td>Daily</td></tr>
+            <tr><td>Base rate / treasury yield</td><td>Bank of Korea</td><td>Monthly / Daily</td></tr>
+            <tr><td>Foreign net buy/sell</td><td>Exchange</td><td>Daily</td></tr>
+            <tr><td>VKOSPI (implied volatility)</td><td>Exchange</td><td>Daily</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 3.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">3.2 &nbsp;Data Cleansing / <span class="kr">데이터 정제</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w40"><col class="col-w60"></colgroup>
+          <thead><tr><th>Issue</th><th>Rule</th></tr></thead>
+          <tbody>
+            <tr><td>Missing values (holidays)</td><td>Forward fill from previous trading day</td></tr>
+            <tr><td>Date alignment</td><td>Unify all series to trading-day calendar</td></tr>
+            <tr><td>Outliers (&gt; ±3σ)</td><td>Cap at boundary; set review flag</td></tr>
+            <tr><td>API failure</td><td>Retain last valid value; set <code>data_stale = true</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 3.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">3.3 &nbsp;Indicator Calculation / <span class="kr">지표 산출</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w30"><col class="col-w70"></colgroup>
+          <thead><tr><th>Indicator</th><th>Formula</th></tr></thead>
+          <tbody>
+            <tr><td>MA₂₀, MA₆₀, MA₁₂₀</td><td>Simple moving average over N trading days</td></tr>
+            <tr><td>Disparity (MAₙ)</td><td><code>current_price / MAₙ × 100</code></td></tr>
+            <tr><td>Historical Volatility</td><td><code>σ_daily(N days) × √252</code> (annualized)</td></tr>
+            <tr><td>Volatility Ratio</td><td><code>HV20 / HV60</code></td></tr>
+            <tr><td>MDD</td><td><code>(trough − peak) / peak × 100</code> over rolling window</td></tr>
+            <tr><td>VaR (95%)</td><td>5th percentile of 252-day return distribution</td></tr>
+            <tr><td>CVaR</td><td>Conditional mean of returns below VaR threshold</td></tr>
+            <tr><td>Volume Ratio</td><td><code>current_volume / MA20_volume</code></td></tr>
+            <tr><td>Foreign Cumulative Flow</td><td>Rolling N-day sum of net buy/sell</td></tr>
+            <tr><td>ADX</td><td>Derived from DI+/DI− over 14-day period</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 4 — RISK MODELS
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s4">
+    <div class="section-header">
+      <span class="section-number">4</span>
+      <h2 class="section-title">Risk Models / <span class="kr">리스크 모델</span></h2>
+    </div>
+
+    <p>Each model outputs <strong>Low (1) · Medium (2) · High (3) · Critical (4)</strong> independently. When multiple indicators within a model conflict, the higher grade applies.</p>
+
+    <!-- 4.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">4.1 &nbsp;Market Risk <span class="weight">30%</span> / <span class="kr">시장 리스크</span></h3>
+      <p style="font-size:8.5pt;color:var(--color-muted);margin-bottom:6px;">Key indicators: MA alignment, disparity (MA₂₀/MA₆₀), ADX, consecutive down-day count.</p>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w15"><col class="col-w85"></colgroup>
+          <thead><tr><th>Grade</th><th>Conditions</th></tr></thead>
+          <tbody>
+            <tr class="band-low"><td><span class="badge badge-safe">Low</span></td><td>Bullish alignment (MA₂₀ &gt; MA₆₀ &gt; MA₁₂₀), disparity 98–102, ADX &gt; 25</td></tr>
+            <tr class="band-medium"><td><span class="badge badge-alert">Medium</span></td><td>MA₂₀ &lt; MA₆₀, disparity 94–98, or ADX &lt; 20</td></tr>
+            <tr class="band-high"><td><span class="badge badge-danger">High</span></td><td>MA₂₀ &lt; MA₆₀ &lt; MA₁₂₀, disparity 90–94</td></tr>
+            <tr class="band-critical"><td><span class="badge badge-extreme">Critical</span></td><td>Full bearish alignment, disparity &lt; 90, ≥ 5 consecutive down days</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 4.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">4.2 &nbsp;Volatility Risk <span class="weight">25%</span> / <span class="kr">변동성 리스크</span></h3>
+      <p style="font-size:8.5pt;color:var(--color-muted);margin-bottom:6px;">Key indicators: HV20, HV60, VKOSPI, volatility ratio (HV20/HV60 &gt; 1.2: spike; &lt; 0.8: compression).</p>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w15"><col class="col-w40"><col class="col-w45"></colgroup>
+          <thead><tr><th>Grade</th><th>HV (annualized)</th><th>VKOSPI</th></tr></thead>
+          <tbody>
+            <tr class="band-low"><td><span class="badge badge-safe">Low</span></td><td>&lt; 12%</td><td>&lt; 15</td></tr>
+            <tr class="band-medium"><td><span class="badge badge-alert">Medium</span></td><td>12%–20%</td><td>15–25</td></tr>
+            <tr class="band-high"><td><span class="badge badge-danger">High</span></td><td>20%–30%</td><td>25–35</td></tr>
+            <tr class="band-critical"><td><span class="badge badge-extreme">Critical</span></td><td>&gt; 30%</td><td>&gt; 35</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 4.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">4.3 &nbsp;Liquidity Risk <span class="weight">15%</span> / <span class="kr">유동성 리스크</span></h3>
+      <p style="font-size:8.5pt;color:var(--color-muted);margin-bottom:6px;">Key indicators: volume ratio, turnover ratio, top-10 turnover concentration (&gt; 40% signals polarization).</p>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w15"><col class="col-w30"><col class="col-w55"></colgroup>
+          <thead><tr><th>Grade</th><th>Volume Ratio</th><th>Additional Condition</th></tr></thead>
+          <tbody>
+            <tr class="band-low"><td><span class="badge badge-safe">Low</span></td><td>≥ 1.0</td><td>—</td></tr>
+            <tr class="band-medium"><td><span class="badge badge-alert">Medium</span></td><td>0.7–1.0</td><td>—</td></tr>
+            <tr class="band-high"><td><span class="badge badge-danger">High</span></td><td>0.5–0.7</td><td>≥ 3 consecutive days declining</td></tr>
+            <tr class="band-critical"><td><span class="badge badge-extreme">Critical</span></td><td>&lt; 0.5</td><td>≥ 5 consecutive days declining</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 4.4 -->
+    <div class="subsection">
+      <h3 class="subsection-title">4.4 &nbsp;Downside Risk <span class="weight">10%</span> / <span class="kr">하방 리스크</span></h3>
+      <p style="font-size:8.5pt;color:var(--color-muted);margin-bottom:6px;">Key indicators: MDD (60-day and 252-day), VaR 95% 1-day, CVaR.</p>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w15"><col class="col-w40"><col class="col-w45"></colgroup>
+          <thead><tr><th>Grade</th><th>MDD (60-day)</th><th>VaR (95%, 1-day)</th></tr></thead>
+          <tbody>
+            <tr class="band-low"><td><span class="badge badge-safe">Low</span></td><td>&gt; −5%</td><td>&gt; −1.5%</td></tr>
+            <tr class="band-medium"><td><span class="badge badge-alert">Medium</span></td><td>−5% to −10%</td><td>−1.5% to −2.5%</td></tr>
+            <tr class="band-high"><td><span class="badge badge-danger">High</span></td><td>−10% to −20%</td><td>−2.5% to −3.5%</td></tr>
+            <tr class="band-critical"><td><span class="badge badge-extreme">Critical</span></td><td>&lt; −20%</td><td>&lt; −3.5%</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 5 — MACRO RISK MODEL
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s5">
+    <div class="section-header">
+      <span class="section-number">5</span>
+      <h2 class="section-title">Macro Risk Model / <span class="kr">매크로 리스크 모델</span></h2>
+    </div>
+
+    <div class="callout callout-macro">
+      <span class="callout-label-inline" style="color:#7a3800;">Architectural Distinction</span>
+      Unlike the four threshold-based models in Section 4, the Macro Risk Model is architecturally distinct: it is the only model that applies a compound internal pipeline — combining level assessment, event detection, and composite scenario evaluation — where each stage refines or overrides the output of the previous.
+    </div>
+
+    <p>Evaluates macroeconomic pressure through three sequential stages — weight 20% in the composite score. Stage 2 adjusts the Stage 1 base grade; Stage 3 overrides both.</p>
+
+<pre>
+[Stage 1: Level]  →  [Stage 2: Events]  →  [Stage 3: Scenarios]
+   Base grade          ±1 per event           Critical override
+</pre>
+
+    <!-- 5.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">5.1 &nbsp;Stage 1 — Level Assessment / <span class="kr">1단계 — 수준 평가</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w25"><col class="col-w25"><col class="col-w25"><col class="col-w25"></colgroup>
+          <thead><tr><th>Indicator</th><th>Stable</th><th>Caution</th><th>Danger</th></tr></thead>
+          <tbody>
+            <tr><td>KRW/USD</td><td>&lt; 1,300</td><td>1,300–1,400</td><td>&gt; 1,400</td></tr>
+            <tr><td>BOK base rate (MoM)</td><td>Hold / cut</td><td>+0.25%p</td><td>≥ +0.50%p</td></tr>
+            <tr><td>KR-US rate spread</td><td>&gt; 0</td><td>0 to −0.5%p</td><td>&lt; −0.5%p</td></tr>
+            <tr><td>CPI YoY</td><td>&lt; 2.5%</td><td>2.5%–4.0%</td><td>&gt; 4.0%</td></tr>
+            <tr><td>Foreign monthly flow</td><td>Positive</td><td>−1T to 0 KRW</td><td>&lt; −2T KRW</td></tr>
+            <tr><td>M2 growth YoY</td><td>Normal</td><td>Decelerating</td><td>Declining / negative</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 5.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">5.2 &nbsp;Stage 2 — Event Detection / <span class="kr">2단계 — 이벤트 감지</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w30"><col class="col-w40"><col class="col-w30"></colgroup>
+          <thead><tr><th>Event</th><th>Trigger</th><th>Effect</th></tr></thead>
+          <tbody>
+            <tr><td>FX Spike</td><td>Weekly &gt; 3% or daily &gt; 1.5%</td><td>+1</td></tr>
+            <tr><td>Foreign Exodus</td><td>5 sell days + cumulative &gt; 1T KRW</td><td>+1</td></tr>
+            <tr><td>Rate Hike</td><td>MoM increase ≥ 0.25%p</td><td>+1</td></tr>
+            <tr><td>CPI Surge</td><td>MoM increase ≥ 0.5%p</td><td>+1</td></tr>
+            <tr><td>Yield Inversion</td><td>Spread crosses positive → negative</td><td>+1</td></tr>
+            <tr><td>Liquidity Contraction</td><td>M2 growth sharply declines</td><td>+1</td></tr>
+            <tr><td>Foreign Return</td><td>5 buy days + cumulative &gt; 500B KRW</td><td>−1</td></tr>
+            <tr><td>Rate Cut</td><td>MoM decrease ≥ 0.25%p</td><td>−1</td></tr>
+            <tr><td>Liquidity Expansion</td><td>M2 growth sharply increases</td><td>−1</td></tr>
+            <tr><td>Simultaneous upward (×2+)</td><td>Any 2+ upward events on the same day</td><td>+1 additional</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 5.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">5.3 &nbsp;Stage 3 — Composite Scenarios / <span class="kr">3단계 — 복합 시나리오</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w25"><col class="col-w35"><col class="col-w40"></colgroup>
+          <thead><tr><th>Scenario</th><th>Trigger Condition</th><th>Response</th></tr></thead>
+          <tbody>
+            <tr><td>Capital Flight</td><td>FX Spike + Foreign Exodus</td><td>Minimize equity; execute FX hedge</td></tr>
+            <tr><td>Tightening Squeeze</td><td>Rate Hike + CPI Surge</td><td>Shift to value/dividend; shorten duration</td></tr>
+            <tr><td>Stagflation Alert</td><td>CPI Surge + Foreign Exodus + Rate Hike</td><td>Full defensive; maximize cash and gold</td></tr>
+            <tr><td>Liquidity Crisis</td><td>FX Spike + Rate Hike + Foreign Exodus</td><td>Liquidate all risk assets</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 5.4 -->
+    <div class="subsection">
+      <h3 class="subsection-title">5.4 &nbsp;Grade Output / <span class="kr">등급 산출</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w15"><col class="col-w85"></colgroup>
+          <thead><tr><th>Grade</th><th>Conditions</th></tr></thead>
+          <tbody>
+            <tr class="band-low"><td><span class="badge badge-safe">Low</span></td><td>Stage 1: all stable; Stage 2: no events</td></tr>
+            <tr class="band-medium"><td><span class="badge badge-alert">Medium</span></td><td>Stage 1: 1–2 caution; Stage 2: 0–1 events</td></tr>
+            <tr class="band-high"><td><span class="badge badge-danger">High</span></td><td>Stage 1: ≥ 2 danger; Stage 2: ≥ 2 simultaneous events</td></tr>
+            <tr class="band-critical"><td><span class="badge badge-extreme">Critical</span></td><td>Stage 3: any composite scenario activated</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 6 — SCORING ENGINE
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s6">
+    <div class="section-header">
+      <span class="section-number">6</span>
+      <h2 class="section-title">Scoring Engine / <span class="kr">점수화 엔진</span></h2>
+    </div>
+
+    <!-- 6.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">6.1 &nbsp;Regime Detection / <span class="kr">레짐 감지</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w20"><col class="col-w50"><col class="col-w30"></colgroup>
+          <thead><tr><th>Regime</th><th>Condition</th><th>Weight Set</th></tr></thead>
+          <tbody>
+            <tr><td>Bull</td><td>Bullish MA alignment + ADX &gt; 25</td><td>Default</td></tr>
+            <tr><td>Bear</td><td>Bearish MA alignment + ≥ 3 consecutive down days</td><td>Bear</td></tr>
+            <tr><td>Ranging</td><td>ADX &lt; 20 or MA convergence zone</td><td>Ranging</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 6.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">6.2 &nbsp;Dynamic Weight Table / <span class="kr">동적 가중치 표</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w35"><col class="col-w20"><col class="col-w20"><col class="col-w25"></colgroup>
+          <thead><tr><th>Risk Model</th><th>Default</th><th>Bear</th><th>Ranging</th></tr></thead>
+          <tbody>
+            <tr><td>Market Risk</td><td>30%</td><td>30%</td><td>20%</td></tr>
+            <tr><td>Volatility Risk</td><td>25%</td><td>25%</td><td>25%</td></tr>
+            <tr><td>Macro Risk</td><td>20%</td><td>20%</td><td>20%</td></tr>
+            <tr><td>Liquidity Risk</td><td>15%</td><td>10%</td><td>20%</td></tr>
+            <tr><td>Downside Risk</td><td>10%</td><td>15%</td><td>15%</td></tr>
+            <tr style="font-weight:700;background:#dde3ea;"><td><strong>Total</strong></td><td><strong>100%</strong></td><td><strong>100%</strong></td><td><strong>100%</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 6.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">6.3 &nbsp;Composite Score Formula / <span class="kr">복합 점수 공식</span></h3>
+      <div class="callout callout-score">
+        <span class="callout-label-inline" style="color:#7a6000;">Score Formula</span>
+        <div class="formula-block">Score = (Market × W₁) + (Volatility × W₂) + (Macro × W₃)
+      + (Liquidity × W₄) + (Downside × W₅)
+
+Range:    1.0 (all Low)  –  4.0 (all Critical)
+Boundary: boundary values map to the higher band (e.g., 2.5 → Danger)
+Override: ≥ 2 models Critical + score > 2.5 → immediate defensive transition</div>
+      </div>
+    </div>
+
+    <!-- 6.4 -->
+    <div class="subsection">
+      <h3 class="subsection-title">6.4 &nbsp;Score Band Table / <span class="kr">점수 밴드 표</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w30"><col class="col-w35"><col class="col-w35"></colgroup>
+          <thead><tr><th>Score Range</th><th>Band</th><th>Color</th></tr></thead>
+          <tbody>
+            <tr class="band-safe"><td>1.0 – 1.5</td><td><span class="badge badge-safe">Safe</span></td><td style="color:#2ecc71;font-family:var(--font-mono);font-size:8pt;">#2ECC71</td></tr>
+            <tr class="band-caution"><td>1.5 – 2.0</td><td><span class="badge badge-caution">Caution</span></td><td style="color:#8ab53e;font-family:var(--font-mono);font-size:8pt;">Yellow-green</td></tr>
+            <tr class="band-alert"><td>2.0 – 2.5</td><td><span class="badge badge-alert">Alert</span></td><td style="color:#b89200;font-family:var(--font-mono);font-size:8pt;">#F1C40F</td></tr>
+            <tr class="band-danger"><td>2.5 – 3.0</td><td><span class="badge badge-danger">Danger</span></td><td style="color:#e67e22;font-family:var(--font-mono);font-size:8pt;">#E67E22</td></tr>
+            <tr class="band-extreme"><td>3.0 – 4.0</td><td><span class="badge badge-extreme">Extreme</span></td><td style="color:#e74c3c;font-family:var(--font-mono);font-size:8pt;">#E74C3C</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 7 — STRATEGY ENGINE
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s7">
+    <div class="section-header">
+      <span class="section-number">7</span>
+      <h2 class="section-title">Strategy Engine / <span class="kr">전략 매핑 엔진</span></h2>
+    </div>
+
+    <!-- 7.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">7.1 &nbsp;Score-to-Strategy Mapping / <span class="kr">점수-전략 매핑</span></h3>
+      <div class="callout callout-score" style="margin-bottom:10px;">
+        <span class="callout-label-inline" style="color:#7a6000;">Scoring → Strategy Direct Flow</span>
+        Score band is the sole determinant of investment strategy. No intermediate interpretation step exists.
+      </div>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w25"><col class="col-w25"><col class="col-w15"><col class="col-w15"><col class="col-w20"></colgroup>
+          <thead><tr><th>Score Band</th><th>Strategy</th><th>Equity</th><th>Bonds</th><th>Cash</th></tr></thead>
+          <tbody>
+            <tr class="band-safe"><td><span class="badge badge-safe">Safe</span> 1.0–1.5</td><td>Aggressive</td><td>80–100%</td><td>0–10%</td><td>0–10%</td></tr>
+            <tr class="band-caution"><td><span class="badge badge-caution">Caution</span> 1.5–2.0</td><td>Moderate-Aggressive</td><td>60–80%</td><td>10–20%</td><td>10–20%</td></tr>
+            <tr class="band-alert"><td><span class="badge badge-alert">Alert</span> 2.0–2.5</td><td>Moderate-Defensive</td><td>30–50%</td><td>20–30%</td><td>20–40%</td></tr>
+            <tr class="band-danger"><td><span class="badge badge-danger">Danger</span> 2.5–3.0</td><td>Defensive</td><td>10–30%</td><td>30–40%</td><td>30–50%</td></tr>
+            <tr class="band-extreme"><td><span class="badge badge-extreme">Extreme</span> 3.0+</td><td>Extreme-Defensive</td><td>0–10%</td><td>20–30%</td><td>60–80%</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 7.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">7.2 &nbsp;Strategy Rules / <span class="kr">전략 규칙</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w30"><col class="col-w70"></colgroup>
+          <thead><tr><th>Rule</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td>Automatic mapping</td><td>Strategy derives from score band; no manual override permitted</td></tr>
+            <tr><td>Critical penalty</td><td>Any single model at Critical → equity upper bound −10%p for current band</td></tr>
+            <tr><td>Minimum floor</td><td>Single model at Critical forces at least Moderate-Defensive</td></tr>
+            <tr><td>Recalculation trigger</td><td>Fires whenever composite score crosses a band boundary</td></tr>
+            <tr><td>Conflict resolution</td><td>Downside Risk and Volatility Risk take precedence in allocation adjustments</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 7.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">7.3 &nbsp;Allocation Adjustment Examples / <span class="kr">배분 조정 예시</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w40"><col class="col-w25"><col class="col-w35"></colgroup>
+          <thead><tr><th>Condition</th><th>Base Band</th><th>Outcome</th></tr></thead>
+          <tbody>
+            <tr><td>1 model Critical, score in Alert</td><td>Moderate-Defensive</td><td>Equity capped at 40%</td></tr>
+            <tr><td>1 model Critical, score in Danger</td><td>Defensive</td><td>Equity capped at 20%</td></tr>
+            <tr><td>≥ 2 models Critical, score &gt; 2.5</td><td>Any</td><td>Immediate Extreme-Defensive</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 8 — ALERT SYSTEM
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s8">
+    <div class="section-header">
+      <span class="section-number">8</span>
+      <h2 class="section-title">Alert System / <span class="kr">알림 시스템</span></h2>
+    </div>
+
+    <!-- 8.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">8.1 &nbsp;Indicator Alerts / <span class="kr">지표 알림</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w25"><col class="col-w50"><col class="col-w25"></colgroup>
+          <thead><tr><th>Alert</th><th>Trigger Condition</th><th>Severity</th></tr></thead>
+          <tbody>
+            <tr><td>Score spike</td><td>Composite score ≥ +0.5 vs. prior day</td><td>Warning</td></tr>
+            <tr><td>Single Critical</td><td>Any model reaches Critical</td><td>Warning</td></tr>
+            <tr><td>Volatility spike</td><td>HV20 increases ≥ 30% vs. prior week</td><td>Watch</td></tr>
+            <tr><td>Volume collapse</td><td>Volume ratio &lt; 0.6 for ≥ 3 consecutive days</td><td>Watch</td></tr>
+            <tr><td>Foreign exodus</td><td>≥ 5 consecutive sell days + cumulative ≥ −1T KRW</td><td>Warning</td></tr>
+            <tr><td>Disparity breach</td><td>MA₂₀ disparity ≤ 90 or MA₆₀ disparity ≤ 85</td><td>Warning</td></tr>
+            <tr><td>MDD threshold</td><td>60-day MDD ≤ −15%</td><td><strong>Critical Alert</strong></td></tr>
+            <tr><td>Macro event overlap</td><td>≥ 2 macro events simultaneously</td><td>Warning</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 8.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">8.2 &nbsp;Scenario Alerts / <span class="kr">시나리오 알림</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w25"><col class="col-w50"><col class="col-w25"></colgroup>
+          <thead><tr><th>Alert</th><th>Trigger Condition</th><th>Severity</th></tr></thead>
+          <tbody>
+            <tr><td>Capital Flight</td><td>FX Spike + Foreign Exodus</td><td><strong>Critical Alert</strong></td></tr>
+            <tr><td>Tightening Squeeze</td><td>Rate Hike + CPI Surge</td><td><strong>Critical Alert</strong></td></tr>
+            <tr><td>Stagflation Alert</td><td>CPI Surge + Foreign Exodus + Rate Hike</td><td><strong>Critical Alert</strong></td></tr>
+            <tr><td>Liquidity Crisis</td><td>FX Spike + Rate Hike + Foreign Exodus</td><td><strong>Critical Alert</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 8.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">8.3 &nbsp;Delivery Method / <span class="kr">전달 방식</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w25"><col class="col-w30"><col class="col-w45"></colgroup>
+          <thead><tr><th>Severity</th><th>Channel</th><th>Format</th></tr></thead>
+          <tbody>
+            <tr><td>Watch</td><td>Dashboard banner</td><td>Yellow banner + 1-line summary</td></tr>
+            <tr><td>Warning</td><td>Dashboard popup + email</td><td>Cause + recommended action</td></tr>
+            <tr><td>Critical Alert</td><td>Popup + email + push notification</td><td>Urgent message + allocation adjustment</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 9 — INSIGHT GENERATOR
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s9">
+    <div class="section-header">
+      <span class="section-number">9</span>
+      <h2 class="section-title">Insight Generator / <span class="kr">인사이트 생성기</span></h2>
+    </div>
+
+    <!-- 9.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">9.1 &nbsp;Condition-to-Insight Table / <span class="kr">조건-인사이트 테이블</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w40"><col class="col-w60"></colgroup>
+          <thead><tr><th>Condition</th><th>Generated Insight</th></tr></thead>
+          <tbody>
+            <tr><td>Volatility ≥ High AND Market ≥ High</td><td>"Increasing volatility and a downtrend are occurring simultaneously."</td></tr>
+            <tr><td>Foreign sell ≥ 5 days</td><td>"Sustained foreign selling adds continued downward pressure."</td></tr>
+            <tr><td>Composite score ≥ Danger</td><td>"Current conditions recommend a defensive asset allocation."</td></tr>
+            <tr><td>Volume declining ≥ 5 days</td><td>"Persistent volume decline signals weakening market participation."</td></tr>
+            <tr><td>Macro Risk = Critical</td><td>"Rate hikes and currency depreciation have pushed macro risk to extreme."</td></tr>
+            <tr><td>Score = Safe AND bullish alignment</td><td>"Risk is low and trend is intact. Aggressive positioning is valid."</td></tr>
+            <tr><td>MDD Critical AND VaR at threshold</td><td>"Maximum loss potential has exceeded threshold. Reduce position size."</td></tr>
+            <tr><td>Capital Flight activated</td><td>"FX spike and foreign exodus detected. Capital outflow is accelerating."</td></tr>
+            <tr><td>Tightening Squeeze activated</td><td>"Overlapping rate hikes and CPI surge are intensifying tightening pressure."</td></tr>
+            <tr><td>Stagflation Alert activated</td><td>"Inflation, foreign exodus, and rate hikes are concurrent. Full defensive shift required."</td></tr>
+            <tr><td>Liquidity Crisis activated</td><td>"Systemic liquidity risk detected. Minimize all risk assets immediately."</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 9.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">9.2 &nbsp;Generation Rules / <span class="kr">생성 규칙</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w30"><col class="col-w70"></colgroup>
+          <thead><tr><th>Rule</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td>Compound priority</td><td>Multi-condition insights take priority over single-indicator insights</td></tr>
+            <tr><td>Specific values</td><td>Include concrete numbers when available (e.g., "volatility up 32% vs. prior week")</td></tr>
+            <tr><td>Terminal rule</td><td>Final insight in every set must be a strategy recommendation sentence</td></tr>
+            <tr><td>Deduplication</td><td>Same condition insight may not repeat for ≥ 3 consecutive days</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 9.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">9.3 &nbsp;Display Priority / <span class="kr">표시 우선순위</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w15"><col class="col-w45"><col class="col-w40"></colgroup>
+          <thead><tr><th>Priority</th><th>Condition</th><th>Display</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Composite scenario activated</td><td>Pinned top; red highlight</td></tr>
+            <tr><td>2</td><td>Single model at Critical</td><td>Pinned second; orange highlight</td></tr>
+            <tr><td>3</td><td>Multi-condition compound insight</td><td>Standard card order</td></tr>
+            <tr><td>4</td><td>Single-condition insight</td><td>Lowest priority card</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 10 — DASHBOARD
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s10">
+    <div class="section-header">
+      <span class="section-number">10</span>
+      <h2 class="section-title">Dashboard / <span class="kr">대시보드</span></h2>
+    </div>
+
+    <!-- 10.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">10.1 &nbsp;Layout / <span class="kr">레이아웃</span></h3>
+<pre>┌────────────────────────────────────────────────────────┐
+│  KOSPI Risk Intelligence Dashboard          [Date]      │
+├──────────────────┬─────────────────────────────────────┤
+│  [1] Composite   │  [2] Risk Type Radar Chart          │
+│  Risk Gauge      │  (5-axis: Market/Vol/Liq/Down/Macro)│
+├──────────────────┴─────────────────────────────────────┤
+│  [3] Risk Trend Time-Series (last 252 days)            │
+├─────────────────────────┬──────────────────────────────┤
+│  [4] Strategy &amp;         │  [5] Insight Panel           │
+│  Asset Allocation       │  (cards, prioritized)        │
+└─────────────────────────┴──────────────────────────────┘</pre>
+    </div>
+
+    <!-- 10.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">10.2 &nbsp;Component Specifications / <span class="kr">컴포넌트 사양</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w20"><col class="col-w20"><col class="col-w60"></colgroup>
+          <thead><tr><th>Component</th><th>Type</th><th>Key Behavior</th></tr></thead>
+          <tbody>
+            <tr><td>[1] Gauge</td><td>Semicircle, 0°–180°</td><td>Score (2 decimal places) + band label + color zone</td></tr>
+            <tr><td>[2] Radar</td><td>Pentagon, 5-axis</td><td>Current (solid) vs. prior week (dashed); axis range 1–4</td></tr>
+            <tr><td>[3] Time-series</td><td>Line chart</td><td>252-day composite + 5 toggleable model lines; date-range selector</td></tr>
+            <tr><td>[4] Allocation</td><td>Pie or horizontal bar</td><td>Strategy name + equity/bond/cash %; auto-updates on band change</td></tr>
+            <tr><td>[5] Insights</td><td>Card list</td><td>Priority-sorted cards; click-to-expand</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 10.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">10.3 &nbsp;Refresh Schedule / <span class="kr">갱신 일정</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w30"><col class="col-w70"></colgroup>
+          <thead><tr><th>Event</th><th>Behavior</th></tr></thead>
+          <tbody>
+            <tr><td>Post-market close</td><td>Full pipeline refresh; all components update</td></tr>
+            <tr><td>Threshold breach</td><td>Alert triggered in real time; popup displayed immediately</td></tr>
+            <tr><td><code>data_stale = true</code></td><td>Data-quality warning shown; calculations proceed with flagged values</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 11 — ERROR HANDLING
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s11">
+    <div class="section-header">
+      <span class="section-number">11</span>
+      <h2 class="section-title">Error Handling &amp; Robustness / <span class="kr">오류 처리 및 견고성</span></h2>
+    </div>
+
+    <div class="callout callout-error" style="margin-bottom:14px;">
+      <span class="callout-label-inline" style="color:#7a1000;">Resilience Policy</span>
+      Layered fallback at every pipeline stage. Degraded operation is always preferred over a full halt. Failures are contained to the layer of origin.
+    </div>
+
+    <!-- 11.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">11.1 &nbsp;Data Layer / <span class="kr">데이터 레이어</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w35"><col class="col-w65"></colgroup>
+          <thead><tr><th>Failure</th><th>Handling</th></tr></thead>
+          <tbody>
+            <tr><td>API unavailable</td><td>Retry × 3 (exponential backoff); fall back to last valid value; <code>data_stale = true</code></td></tr>
+            <tr><td>Holiday / missing date</td><td>Forward fill from prior trading day</td></tr>
+            <tr><td>Outlier value (&gt; ±3σ)</td><td>Cap at ±3σ boundary; log for review</td></tr>
+            <tr><td>Partial fields null</td><td>Calculate from available fields; mark affected models as <code>degraded</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 11.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">11.2 &nbsp;Indicator &amp; Model Layer / <span class="kr">지표 및 모델 레이어</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w40"><col class="col-w60"></colgroup>
+          <thead><tr><th>Failure</th><th>Handling</th></tr></thead>
+          <tbody>
+            <tr><td>Insufficient history for MA₁₂₀</td><td>Skip MA₁₂₀ alignment check; grade from remaining indicators</td></tr>
+            <tr><td>VaR sample &lt; 252 days</td><td>Use available history; append <code>low_sample</code> warning to insight</td></tr>
+            <tr><td>ADX not computable</td><td>Treat ADX condition as neutral; exclude from grade logic</td></tr>
+            <tr><td>Model returns null grade</td><td>Substitute Medium (2) as safe default; log failure</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 11.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">11.3 &nbsp;Scoring &amp; Delivery Layer / <span class="kr">점수화 및 전달 레이어</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w40"><col class="col-w60"></colgroup>
+          <thead><tr><th>Failure</th><th>Handling</th></tr></thead>
+          <tbody>
+            <tr><td>All 5 models degraded</td><td>Halt pipeline; display maintenance notice on dashboard</td></tr>
+            <tr><td>Composite score out of [1.0, 4.0]</td><td>Clamp to range; log anomaly</td></tr>
+            <tr><td>Email delivery failure</td><td>Retry × 2; alert remains visible on dashboard</td></tr>
+            <tr><td>Push notification failure</td><td>Fall back to dashboard popup only</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 12 — EXTENSIBILITY
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s12">
+    <div class="section-header">
+      <span class="section-number">12</span>
+      <h2 class="section-title">Extensibility / <span class="kr">확장성</span></h2>
+    </div>
+
+    <!-- 12.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">12.1 &nbsp;Design Principle / <span class="kr">설계 원칙</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w30"><col class="col-w70"></colgroup>
+          <thead><tr><th>Property</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td>Extension scope</td><td>Replace indicator thresholds and macro data sources only</td></tr>
+            <tr><td>Unchanged scope</td><td>Layer structure, grade system, score formula, alert rules, dashboard</td></tr>
+            <tr><td>Extension pattern</td><td>Clone config → substitute market-specific parameters → validate thresholds</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 12.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">12.2 &nbsp;Parameter Comparison by Market / <span class="kr">시장별 파라미터 비교</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w30"><col class="col-w25"><col class="col-w20"><col class="col-w25"></colgroup>
+          <thead><tr><th>Parameter</th><th>KOSPI</th><th>S&amp;P 500</th><th>Crypto</th></tr></thead>
+          <tbody>
+            <tr><td>Disparity High threshold</td><td>MA₂₀ &lt; 95</td><td>MA₂₀ &lt; 96</td><td>MA₂₀ &lt; 90</td></tr>
+            <tr><td>HV High threshold</td><td>σ &gt; 20%</td><td>σ &gt; 18%</td><td>σ &gt; 60%</td></tr>
+            <tr><td>Volume ratio High</td><td>&lt; 0.7</td><td>&lt; 0.75</td><td>Market cap liquidity index</td></tr>
+            <tr><td>Macro indicators</td><td>KRW/USD, BOK rate, foreign flow</td><td>DXY, Fed rate, yield spread</td><td>BTC dominance, on-chain liquidity</td></tr>
+            <tr><td>MDD High threshold</td><td>−10% to −20%</td><td>−10% to −20%</td><td>−30% to −50%</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 12.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">12.3 &nbsp;Change Scope / <span class="kr">변경 범위</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w50"><col class="col-w50"></colgroup>
+          <thead><tr><th>Requires Change</th><th>Unchanged</th></tr></thead>
+          <tbody>
+            <tr><td>Indicator thresholds</td><td>Layer structure (1–7)</td></tr>
+            <tr><td>Macro data sources</td><td>Grade system (Low / Medium / High / Critical)</td></tr>
+            <tr><td>Weight fine-tuning</td><td>Score formula and band definitions</td></tr>
+            <tr><td></td><td>Alert rules and delivery</td></tr>
+            <tr><td></td><td>Dashboard layout and component types</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 12.4 -->
+    <div class="subsection">
+      <h3 class="subsection-title">12.4 &nbsp;Roadmap / <span class="kr">로드맵</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w15"><col class="col-w25"><col class="col-w60"></colgroup>
+          <thead><tr><th>Phase</th><th>Feature</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><span class="phase-current">1 (current)</span></td><td>KOSPI dashboard</td><td>Full pipeline as specified in this document</td></tr>
+            <tr><td>2</td><td>Sector risk</td><td>Independent scores for Semiconductor, Financial, Energy, etc.</td></tr>
+            <tr><td>3</td><td>US equity</td><td>S&amp;P 500 support with global comparison view</td></tr>
+            <tr><td>4</td><td>Real-time data</td><td>Intraday refresh; minute-level indicator computation</td></tr>
+            <tr><td>5</td><td>AI report</td><td>LLM-generated daily/weekly report with scenario analysis</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       SECTION 13 — CONCLUSION
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="s13">
+    <div class="section-header">
+      <span class="section-number">13</span>
+      <h2 class="section-title">Conclusion / <span class="kr">결론</span></h2>
+    </div>
+
+    <!-- 13.1 -->
+    <div class="subsection">
+      <h3 class="subsection-title">13.1 &nbsp;Design Summary / <span class="kr">설계 요약</span></h3>
+      <div class="callout callout-conclusion">
+        <span class="callout-label-inline" style="color:var(--color-accent);">System Purpose</span>
+        The system addresses three structural gaps in KOSPI market risk analysis: the invisibility of structured risk, the fragmentation of risk signals across data domains, and the absence of a direct path from analysis to portfolio action. The 7-layer pipeline resolves these by decomposing risk into five independently auditable models, aggregating them into a single interpretable score, and mapping that score deterministically to investment strategy and natural-language insight.
+      </div>
+    </div>
+
+    <!-- 13.2 -->
+    <div class="subsection">
+      <h3 class="subsection-title">13.2 &nbsp;Core Properties / <span class="kr">핵심 속성</span></h3>
+      <div class="table-wrap">
+        <table>
+          <colgroup><col class="col-w25"><col class="col-w75"></colgroup>
+          <thead><tr><th>Property</th><th>Implementation</th></tr></thead>
+          <tbody>
+            <tr><td>Explainability</td><td>Every output — grade, score, strategy, insight — traces to specific indicator values and documented rules</td></tr>
+            <tr><td>Determinism</td><td>Identical inputs always produce identical grades, scores, and strategies; no stochastic elements</td></tr>
+            <tr><td>Resilience</td><td>Layered fallback at each pipeline stage; degraded operation is preferred over full halt</td></tr>
+            <tr><td>Extensibility</td><td>Layers 2–7 contain no market-specific logic; only Layer 1 parameters change per deployment</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 13.3 -->
+    <div class="subsection">
+      <h3 class="subsection-title">13.3 &nbsp;Evolution Path / <span class="kr">발전 경로</span></h3>
+      <p>Phases 2 through 5 extend the system's market coverage, data frequency, and output richness without modifying the base 7-layer architecture. The independent risk model structure, deterministic scoring engine, and rule-based output pipeline remain unchanged across all planned phases. The system is designed to absorb scope growth at the boundary of Layer 1 and indicator thresholds, leaving the core pipeline stable.</p>
+      <div class="callout callout-conclusion" style="margin-top:10px;">
+        <span class="callout-label-inline" style="color:var(--color-accent);">Authoritative Reference</span>
+        This document constitutes the complete design specification for Version 1.0 of the KOSPI Risk Intelligence Dashboard and is the authoritative reference for all implementation, validation, and extension decisions.
+      </div>
+    </div>
+
+    <div class="final-statement">
+      Risk, when properly structured, can be converted into deterministic investment decisions.<br>
+      <span class="kr" style="font-size:0.9em;opacity:0.65;font-style:normal;font-weight:400;">최종 메시지: 리스크는 구조화될 때, 결정 가능한 투자 판단으로 전환될 수 있다.</span>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ══════════════════════════════════════════════
+       APPENDIX
+  ══════════════════════════════════════════════ -->
+  <div class="section" id="appendix">
+    <div class="appendix-header">Appendix — Term Definitions / <span class="kr" style="font-size:0.82em;">부록 — 용어 정의</span></div>
+    <div class="table-wrap">
+      <table>
+        <colgroup><col class="col-w15"><col class="col-w85"></colgroup>
+        <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+        <tbody>
+          <tr><td>MDD</td><td>Maximum Drawdown — peak-to-trough decline over a specified window</td></tr>
+          <tr><td>VaR</td><td>Value at Risk — maximum expected loss within a confidence interval</td></tr>
+          <tr><td>CVaR</td><td>Conditional VaR — mean loss for outcomes beyond the VaR threshold</td></tr>
+          <tr><td>ADX</td><td>Average Directional Index — trend strength regardless of direction</td></tr>
+          <tr><td>VKOSPI</td><td>Implied volatility index derived from KOSPI200 option prices</td></tr>
+          <tr><td>Disparity</td><td><code>(current price / MAₙ) × 100</code> — deviation from moving average</td></tr>
+          <tr><td>HV</td><td>Historical Volatility — annualized standard deviation of past returns</td></tr>
+          <tr><td>Bullish alignment</td><td>MA₂₀ &gt; MA₆₀ &gt; MA₁₂₀ — confirms uptrend structure</td></tr>
+          <tr><td>Bearish alignment</td><td>MA₂₀ &lt; MA₆₀ &lt; MA₁₂₀ — confirms downtrend structure</td></tr>
+          <tr><td>Deterministic</td><td>Same inputs always produce the same score, strategy, and insights</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /page -->
+</body>
+</html>
