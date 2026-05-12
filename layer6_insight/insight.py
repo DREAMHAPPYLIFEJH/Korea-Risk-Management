@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rules.alert import has_critical_alert
 from rules.override import apply_ovr05
 
 
@@ -115,9 +116,7 @@ def generate(
     insights = apply_ovr05(insights, strategy=strategy, integrated_score=integrated_score)
 
     # ── R5: Critical_Alert 활성 시 critical priority 최상단 ──
-    if "Critical_Alert" in active_alerts or any(
-        a in active_alerts for a in ("ALT-07", "ALT-09", "ALT-10", "ALT-11", "ALT-12")
-    ):
+    if has_critical_alert(active_alerts):
         critical_items = [i for i in insights if i["priority"] == "critical"]
         other_items    = [i for i in insights if i["priority"] != "critical"]
         insights = critical_items + other_items
