@@ -198,3 +198,27 @@ OUTLIER_SIGMA = 3               # |x - rolling_mean| > 3σ → 이상값 플래�
 EQUITY_CEILING_CRITICAL_DROP = 10   # OVR-02: critical >= 1 시 -10%p
 EQUITY_CEILING_DOUBLE_C_DROP = 10   # CR-03: 하방+변동성 양쪽 Critical → 추가 -10%p
 EQUITY_CEILING_DOUBLE_H_DROP = 5    # CR-03: 하방+변동성 양쪽 High 이상 → -5%p
+
+# ─────────────────────────────────────────────────────────────
+# Phase 2 — 섹터 리스크 (PDF §4.4)
+# ─────────────────────────────────────────────────────────────
+
+# 업종 베타 등급 경계
+SECTOR_BETA_CRITICAL = 1.5   # >= 1.5 AND RS 약세 → Critical
+SECTOR_BETA_HIGH     = 1.3   # >= 1.3 → High
+SECTOR_BETA_MEDIUM   = 1.0   # >= 1.0 → Medium, < 1.0 → Low
+
+# 상대 강도 (RS) 기준
+SECTOR_RS_DECLINE    = 1.0   # < 1.0 → 시장 대비 약세 (Critical 판정 보조 조건)
+
+# 섹터 MDD 경계 (%)
+SECTOR_MDD_HIGH      = -15   # <= -15% → High 보정
+SECTOR_MDD_CRITICAL  = -25   # <= -25% → Critical 보정
+
+# 섹터 HV20 경계 (연율화 %)
+SECTOR_HV_HIGH       = 30    # >= 30% → High 보정
+SECTOR_HV_CRITICAL   = 45    # >= 45% → Critical 보정
+
+# 베타 산출 롤링 윈도우 (영업일)
+SECTOR_BETA_WINDOW   = 60
+SECTOR_RS_WINDOW     = 20

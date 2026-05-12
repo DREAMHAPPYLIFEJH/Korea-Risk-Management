@@ -95,3 +95,18 @@ def CLAMP(value, min_val, max_val):
     if value > max_val:
         return max_val
     return value
+
+
+# ── Phase 2 — 섹터 정의 ──────────────────────────────────────
+
+# 분석 대상 섹터 목록
+SECTOR_NAMES: list[str] = ["반도체", "금융", "에너지/화학", "자동차", "헬스케어"]
+
+# 키움 ka20006 업종 코드 (inds_cd) — ka10051 응답 기준 확인 완료
+SECTOR_CODES: dict[str, str] = {
+    "반도체":     "013",  # 전기/전자
+    "금융":       "021",  # 금융
+    "에너지/화학": "008",  # 화학
+    "자동차":     "015",  # 운송장비/부품
+    "헬스케어":   "009",  # 제약
+}

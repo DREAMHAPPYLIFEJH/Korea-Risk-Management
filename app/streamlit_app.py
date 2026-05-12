@@ -140,3 +140,23 @@ with st.expander("🔍 5 리스크 세부 (JSON)"):
 
 with st.expander("⚙️ 동적 가중치"):
     st.json(result["weights"])
+
+# ── Phase 2: 섹터 리스크 분석 ──────────────────────────────
+st.divider()
+st.subheader("섹터 리스크 분석 (Phase 2)")
+
+try:
+    from pipeline.sector_pipeline import run_sector_analysis
+    from layer7_visualization.sector_chart import make_sector_table
+
+    sector_results = run_sector_analysis(result)
+    st.plotly_chart(make_sector_table(sector_results), use_container_width=True)
+
+    pending = [r.sector for r in sector_results if not r.data_available]
+    if pending:
+        st.caption(
+            f"⚠️ 업종 코드 미확보 섹터: {', '.join(pending)} — "
+            "config/constants.py의 SECTOR_CODES에 키움 inds_cd 입력 후 활성화"
+        )
+except Exception as e:
+    st.warning(f"섹터 분석 오류: {type(e).__name__}: {e}")
