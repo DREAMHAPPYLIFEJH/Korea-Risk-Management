@@ -97,6 +97,20 @@ def CLAMP(value, min_val, max_val):
     return value
 
 
+# ── Phase 3 — S&P500 설정 ────────────────────────────────────
+
+# yfinance 티커
+US_MARKET_TICKER = "^GSPC"   # S&P500
+US_VIX_TICKER    = "^VIX"    # VIX (VKOSPI 대응)
+US_DXY_TICKER    = "DX-Y.NYB" # Dollar Index
+
+# FRED 시리즈 ID
+FRED_SERIES = {
+    "fed_rate": "FEDFUNDS",   # 연준 기준금리
+    "cpi":      "CPIAUCSL",   # CPI (전수 지수)
+    "m2":       "M2SL",       # M2 통화량
+}
+
 # ── Phase 2 — 섹터 정의 ──────────────────────────────────────
 
 # 분석 대상 섹터 목록

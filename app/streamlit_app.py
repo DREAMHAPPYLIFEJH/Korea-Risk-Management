@@ -160,3 +160,50 @@ try:
         )
 except Exception as e:
     st.warning(f"섹터 분석 오류: {type(e).__name__}: {e}")
+
+# ── Phase 3: S&P500 분석 + 글로벌 비교 ───────────────────────
+st.divider()
+st.subheader("S&P 500 리스크 분석 (Phase 3)")
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_us_snapshot(end_date_iso: str) -> dict:
+    from pipeline.us_pipeline import run_us_snapshot
+    return run_us_snapshot(end_date=date.fromisoformat(end_date_iso))
+
+try:
+    from layer7_visualization.comparison import (
+        make_comparison_gauge, make_comparison_radar, make_comparison_table,
+    )
+    with st.spinner("S&P500 분석 중..."):
+        us_result = load_us_snapshot(selected_date.isoformat())
+
+    fred_ok = us_result.get("fred_available", False)
+    if not fred_ok:
+        st.caption("⚠️ FRED API 키 미설정 — 연준금리·CPI·M2 제외, DXY 기반 매크로만 평가")
+
+    col_us1, col_us2 = st.columns([1, 1])
+    with col_us1:
+        st.markdown("##### 통합 리스크 점수 비교")
+        st.plotly_chart(make_comparison_gauge(result, us_result),
+                        use_container_width=True)
+    with col_us2:
+        st.markdown("##### 리스크 유형별 비교")
+        st.plotly_chart(make_comparison_radar(result, us_result),
+                        use_container_width=True)
+
+    st.markdown("##### 등급 상세 비교")
+    st.plotly_chart(make_comparison_table(result, us_result),
+                    use_container_width=True)
+
+    with st.expander("📊 S&P500 전략 / 자산 배분"):
+        a_us = us_result["strategy"]["allocation"]
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            st.metric("전략", us_result["strategy"]["strategy"])
+            st.metric("통합 점수", f"{us_result['score']:.2f} ({us_result['score_band']})")
+        with col_s2:
+            st.metric("주식", f"{a_us['equity']}%")
+            st.metric("채권 / 현금", f"{a_us['bond']}% / {a_us['cash']}%")
+
+except Exception as e:
+    st.warning(f"S&P500 분석 오류: {type(e).__name__}: {e}")

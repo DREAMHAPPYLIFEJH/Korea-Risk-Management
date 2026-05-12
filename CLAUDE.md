@@ -161,6 +161,17 @@ Both risk modules already have `if vkospi is not None:` / `if conc_ratio is not 
 
 All modules use this import as the first non-comment line. Include it in any new file to maintain uniform deferred annotation evaluation.
 
+### Phase 2 섹터 리스크 — 독립 분석 구조
+
+섹터 리스크는 Phase 1 파이프라인과 완전히 분리됩니다:
+- `pipeline/sector_pipeline.py::run_sector_analysis(result)` — Phase 1 result를 받아 독립 실행
+- `layer3_risk/sector.py::SectorOutput` — Phase 1 RiskOutput과 **별도 스키마** (`grade=None` 허용)
+- 통합 점수·Override·Alert에 영향 없음
+
+섹터 코드는 `config/constants.py::SECTOR_CODES`에서 관리. `inds_cd`에 "?"가 있으면 API 호출 없이 `data_available=False` 반환.
+
+Skills.md 참조: `Phase 2 §P2-1 ~ P2-6`
+
 ### Headless debugging without the full pipeline
 
 To inspect a single indicator or risk without running `run_snapshot()`, import the layer directly:

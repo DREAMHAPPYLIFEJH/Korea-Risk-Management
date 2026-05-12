@@ -2260,6 +2260,175 @@ RETURN active_alerts
 | `hv20_5d_ago` (prev_week_hv20) | Section 2 STATE | ✅ |
 | `fx_weekly_change`, `fx_daily_change` | Section 3에서 계산식 정의 | ✅ |
 | `rate_spread_prev`, `rate_spread_curr` | Section 3에서 계산식 정의 | ✅ |
+
+---
+
+# Phase 2 — 섹터 리스크 분석
+
+> **버전**: v1.0  
+> **기준**: kospi_risk_analysis.pdf §4  
+> **범위**: 5개 섹터 독립 분석 — Phase 1 통합 점수·Override·Alert에 영향 없음  
+> **진입점**: `pipeline/sector_pipeline.py::run_sector_analysis(result)`
+
+---
+
+## P2-1. 섹터 정의 및 데이터 소스
+
+### 분석 대상 섹터
+
+| 섹터명 | 키움 ka20006 `inds_cd` | ka10051 업종명 |
+|--------|----------------------|--------------|
+| 반도체 | `013` | 전기/전자 |
+| 금융 | `021` | 금융 |
+| 에너지/화학 | `008` | 화학 |
+| 자동차 | `015` | 운송장비/부품 |
+| 헬스케어 | `009` | 제약 |
+
+### 데이터 수집 규칙 (Layer 1 — `sector_fetcher.py`)
+
+```python
+# inds_cd에 "?"가 포함되면 API 호출 없이 None 반환 (업종 코드 미확보 상태)
+IF "?" IN SECTOR_CODES[sector]:
+    RETURN None
+
+# 정상: ka20006 업종일봉조회 (Phase 1 get_kospi_ohlcv와 동일 엔드포인트, inds_cd만 다름)
+data = ka20006(inds_cd=SECTOR_CODES[sector], base_dt=end)
+RETURN DataFrame(open, high, low, close)
+```
+
+---
+
+## P2-2. 섹터 지표 계산 (Layer 2 — `sector_indicator.py`)
+
+| 지표 | 계산식 | 데이터 부족 시 |
+|------|--------|--------------|
+| `sector_beta` | `Cov(sector_ret, market_ret, 60일) / Var(market_ret, 60일)` | `None` (< 20일) |
+| `sector_hv20` | `σ(sector_daily_ret, 20일) × √252 × 100` | `None` (< 21일) |
+| `relative_strength` | `sector_cum_ret(20일) / market_cum_ret(20일)` | `None` |
+| `sector_mdd` | `(최저가 - 최고가) / 최고가 × 100, 최근 60 영업일` | `None` (< 60일) |
+
+```python
+# sector_beta 계산
+sector_ret = sector_close.pct_change().dropna()
+market_ret = market_close.pct_change().dropna()
+aligned    = concat([sector_ret, market_ret]).dropna().tail(60)
+beta       = Cov(aligned[0], aligned[1]) / Var(aligned[1])
+
+# relative_strength 계산 (RS > 1.0 = 시장 대비 강세)
+s_ret = (sector_close[-1] / sector_close[-21]) - 1
+m_ret = (market_close[-1] / market_close[-21]) - 1
+rs    = s_ret / m_ret    # m_ret == 0이면 None
+```
+
+---
+
+## P2-3. 섹터 리스크 등급 (Layer 3 — `sector.py`)
+
+### SectorOutput 스키마
+
+> **Phase 1 RiskOutput과 별도 스키마** — `grade=None` 허용 (데이터 미확보).
+
+```json
+{
+  "sector":         "반도체",
+  "grade":          3,
+  "grade_label":    "High",
+  "data_available": true,
+  "indicators": {
+    "beta":              1.24,
+    "hv20":              32.5,
+    "relative_strength": 1.39,
+    "mdd_60":           -18.2
+  },
+  "reason": "beta=1.24(≥1.0) + mdd=-18.2%(≤-15.0)"
+}
+```
+
+### 임계값
+
+| 변수 | 값 | 의미 |
+|------|-----|------|
+| `SECTOR_BETA_CRITICAL` | 1.5 | 베타 Critical 기준 |
+| `SECTOR_BETA_HIGH` | 1.3 | 베타 High 기준 |
+| `SECTOR_BETA_MEDIUM` | 1.0 | 베타 Medium 기준 |
+| `SECTOR_RS_DECLINE` | 1.0 | RS < 1.0 → 시장 대비 약세 |
+| `SECTOR_MDD_HIGH` | -15% | MDD High 보정 |
+| `SECTOR_MDD_CRITICAL` | -25% | MDD Critical 보정 |
+| `SECTOR_HV_HIGH` | 30% | HV20 High 보정 |
+| `SECTOR_HV_CRITICAL` | 45% | HV20 Critical 보정 |
+
+### 등급 판정 (IF/THEN)
+
+```python
+# ── 1단계: 베타 기반 기본 등급 ────────────────────────────────
+rs_weak = (rs IS NOT None AND rs < 1.0)
+
+IF beta >= 1.5 AND rs_weak:
+    grade = 4    # Critical
+ELIF beta >= 1.3:
+    grade = 3    # High
+ELIF beta >= 1.0:
+    grade = 2    # Medium
+ELSE:
+    grade = 1    # Low
+
+# ── 2단계: HV20 보정 (상향만) ─────────────────────────────────
+IF hv20 IS NOT None:
+    IF hv20 >= 45 AND grade < 4:
+        grade = 4
+    ELIF hv20 >= 30 AND grade < 3:
+        grade = 3
+
+# ── 3단계: MDD 보정 (상향만) ──────────────────────────────────
+IF mdd IS NOT None:
+    IF mdd <= -25 AND grade < 4:
+        grade = 4
+    ELIF mdd <= -15 AND grade < 3:
+        grade = 3
+
+RETURN grade
+```
+
+> **보정 원칙**: HV20·MDD는 상향 보정만 가능. 베타 기반 등급보다 낮게 내릴 수 없음.
+
+---
+
+## P2-4. 섹터 파이프라인 (Phase 2 전용)
+
+```
+run_sector_analysis(result)          # Phase 1 result dict 입력
+    ├─ result["series"]["close"]     # KOSPI 종가 시계열 (market_close)
+    ├─ SECTOR_NAMES 순서 반복
+    │   ├─ get_sector_ohlcv()        # Layer 1: inds_cd "???" → None 반환
+    │   └─ evaluate()               # Layer 3: SectorOutput 반환
+    └─ list[SectorOutput]           # 5개 결과 반환
+```
+
+**Phase 1과의 관계**:
+- `run_snapshot()` 결과를 입력으로 받음 (Phase 1 실행 후 호출)
+- 통합 점수, Override, Alert, 전략에 영향 없음
+- 대시보드 전용 섹션으로 분리 표시
+
+---
+
+## P2-5. 섹터 시각화 (Layer 7 — `sector_chart.py`)
+
+```
+make_sector_table(sector_results) → Plotly Table Figure
+
+컬럼: 섹터 | 등급 | 베타 | 변동성(HV20) | 상대강도(RS) | MDD60
+색상: 등급 셀 = GRADE_COLOR 적용 / 데이터 없음 = #EEEEEE
+```
+
+---
+
+## P2-6. Phase 2 알려진 제한
+
+| 항목 | 내용 | 해결 조건 |
+|------|------|-----------|
+| 섹터 범위 | 5개 고정 (반도체·금융·에너지·자동차·헬스케어) | 코드 추가 시 SECTOR_NAMES/SECTOR_CODES 확장 |
+| 캐싱 없음 | 섹터 데이터 매 로딩마다 Kiwoom API 호출 | Phase 4 실시간 연동 시 캐싱 레이어 추가 |
+| 베타 롤링 60일 고정 | 짧은 주기 섹터 변화 미반영 | thresholds.py SECTOR_BETA_WINDOW 조정 |
 | `CLAMP()` | Section 1에서 인라인 정의 + 3E-2 IF/THEN | ✅ |
 | `all_risk_grades` | Section 3에서 리스트로 정의 | ✅ |
 

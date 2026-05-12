@@ -200,6 +200,30 @@ EQUITY_CEILING_DOUBLE_C_DROP = 10   # CR-03: 하방+변동성 양쪽 Critical �
 EQUITY_CEILING_DOUBLE_H_DROP = 5    # CR-03: 하방+변동성 양쪽 High 이상 → -5%p
 
 # ─────────────────────────────────────────────────────────────
+# Phase 3 — S&P500 (기획서 §13.2)
+# ─────────────────────────────────────────────────────────────
+
+# S&P500 변동성 — VIX 임계값 (VKOSPI 동일 사용 가능, 참고용)
+US_HV20_MEDIUM   = 10    # KOSPI: 12
+US_HV20_HIGH     = 18    # KOSPI: 20 (기획서 §13.2)
+US_HV20_CRITICAL = 28    # KOSPI: 30
+
+# 연준 기준금리
+US_FED_RATE_DANGER  = 4.5    # > 4.5% 위험
+US_FED_RATE_CAUTION = 3.5    # 3.5~4.5% 경계
+US_FED_RATE_DELTA_HIKE = 0.25  # >= 0.25%p 인상 이벤트
+US_FED_RATE_DELTA_CUT  = -0.25 # <= -0.25%p 인하 이벤트
+
+# 달러 인덱스 (DXY) — 강달러 = S&P500 다국적기업 역풍
+US_DXY_DANGER      = 105    # > 105 위험
+US_DXY_CAUTION     = 100    # 100~105 경계
+US_DXY_WEEKLY_SPIKE = 0.02  # 주간 +2% 급등 이벤트
+US_DXY_WEEKLY_DROP  = -0.02 # 주간 -2% 급락 이벤트
+
+# 미국 CPI — 한국과 동일 임계값 재사용 (CPI_YOY_CAUTION=2.5, CPI_YOY_DANGER=4.0)
+# 미국 M2 — 한국과 동일 임계값 재사용 (M2_CONTRACTION_DROP, M2_SLOWDOWN_DROP)
+
+# ─────────────────────────────────────────────────────────────
 # Phase 2 — 섹터 리스크 (PDF §4.4)
 # ─────────────────────────────────────────────────────────────
 
