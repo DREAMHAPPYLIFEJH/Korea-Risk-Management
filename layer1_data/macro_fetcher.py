@@ -1,4 +1,5 @@
-"""매크로 데이터 수집 — Skills.md §5 Layer 1.
+"""
+매크로 데이터 수집 — Skills.md §5 Layer 1.
 
 한국은행 ECOS API 기반:
 - fx_rate (원/달러 환율, 731Y001 / 0000001, 일별)

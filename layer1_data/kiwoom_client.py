@@ -1,4 +1,5 @@
-"""키움 REST API 저수준 클라이언트 — Skills.md §5 Layer 1.
+"""
+키움 REST API 저수준 클라이언트 — Skills.md §5 Layer 1.
 
 OAuth2 토큰 발급(au10001) + 공통 TR 요청 헬퍼.
 TR 호출은 POST + JSON, 헤더에 api-id / authorization / cont-yn / next-key 필수.
@@ -79,7 +80,8 @@ class KiwoomClient:
         cont_yn: str = "N",
         next_key: str = "",
     ) -> tuple[dict, dict]:
-        """TR 호출. (응답 body, 응답 헤더 dict) 반환.
+        """
+        TR 호출. (응답 body, 응답 헤더 dict) 반환.
 
         cont_yn / next_key — 페이징은 호출자에서 응답 헤더 보고 다음 호출에 전달.
         """

@@ -76,7 +76,7 @@ def make_sector_table(sector_results: list[SectorOutput]) -> go.Figure:
                 ["white"] * len(sectors),
             ],
             align="center",
-            font=dict(size=12),
+            font=dict(color="#222", size=12),
             height=28,
         ),
     )])

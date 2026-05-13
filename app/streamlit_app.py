@@ -1,9 +1,15 @@
 """KOSPI Risk Intelligence Dashboard — Streamlit 진입점.
 
-레이아웃 (기획서 §9.1):
-  ┌─ [1] 통합 리스크 게이지   [2] 리스크 유형별 레이더 ─┐
-  ├─ [3] 리스크 추이 시계열 ─────────────────────────┤
-  └─ [4] 전략·자산 배분      [5] 인사이트 영역 ──────┘
+레이아웃 (기획서 §9.1 / UI 가이드 적용):
+  ┌─ 헤더 (기준일 + 새로고침) ────────────────────────────┐
+  ├─ Alert 영역 (등급별 색상 border-left) ───────────────┤
+  ├─ 메트릭 카드 4개 (점수 / Phase / Critical / Esc) ────┤
+  ├─ 리스크 유형별 수평 바 차트 ─────────────────────────┤
+  ├─ 리스크 추이 (KOSPI / HV20 / MDD) ────────────────┤
+  ├─ 전략·자산 배분 / 인사이트 ──────────────────────────┤
+  ├─ 세부 정보 (Expanders) ────────────────────────────┤
+  ├─ Phase 2 섹터 분석 ────────────────────────────────┤
+  └─ Phase 3 S&P500 비교 ─────────────────────────────┘
 
 실행:
   streamlit run app/streamlit_app.py
@@ -20,21 +26,162 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import plotly.graph_objects as go
 import streamlit as st
 
 from pipeline.orchestrator import run_snapshot
-from layer7_visualization.gauge import make_gauge
-from layer7_visualization.radar import make_radar
 from layer7_visualization.trend import make_trend
 from layer7_visualization.allocation import make_allocation
-from layer7_visualization.alert_banner import render_alerts
+from rules.alert import alert_level
 
 
 st.set_page_config(
-    page_title="KOSPI Risk Intelligence Dashboard",
+    page_title="KOSPI Risk Intelligence",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+
+# ── 커스텀 CSS ─────────────────────────────────────────────
+st.markdown("""
+<style>
+    .stApp { background-color: #fafafa; }
+
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 1280px;
+    }
+
+    /* 메트릭 카드 */
+    .metric-card {
+        background: #ffffff;
+        border-radius: 10px;
+        padding: 20px 24px;
+        border: 1px solid #e8e8e8;
+        height: 110px;
+    }
+    .metric-card .label {
+        font-size: 13px;
+        color: #888;
+        margin-bottom: 4px;
+        font-weight: 400;
+    }
+    .metric-card .value {
+        font-size: 28px;
+        font-weight: 600;
+        margin: 0;
+        line-height: 1.2;
+    }
+    .metric-card .sub {
+        font-size: 12px;
+        color: #999;
+        margin-top: 6px;
+    }
+
+    /* Alert */
+    .alert-critical {
+        background: #FEF2F2;
+        border-left: 4px solid #EF4444;
+        border-radius: 0 8px 8px 0;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        font-size: 14px;
+        color: #7F1D1D;
+    }
+    .alert-warning {
+        background: #FFFBEB;
+        border-left: 4px solid #F59E0B;
+        border-radius: 0 8px 8px 0;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        font-size: 14px;
+        color: #78350F;
+    }
+    .alert-info {
+        background: #EFF6FF;
+        border-left: 4px solid #3B82F6;
+        border-radius: 0 8px 8px 0;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        font-size: 14px;
+        color: #1E3A5F;
+    }
+
+    /* 인사이트 카드 */
+    .insight-card {
+        background: #ffffff;
+        border-left: 3px solid #cbd5e1;
+        border-radius: 0 8px 8px 0;
+        padding: 10px 14px;
+        margin-bottom: 6px;
+        font-size: 14px;
+        color: #333;
+    }
+    .insight-card.p-critical { border-left-color: #EF4444; }
+    .insight-card.p-high     { border-left-color: #F59E0B; }
+    .insight-card.p-medium   { border-left-color: #3B82F6; }
+    .insight-card.p-low      { border-left-color: #94A3B8; }
+    .insight-card.p-terminal { border-left-color: #10B981; }
+    .insight-card .id {
+        font-size: 11px;
+        color: #888;
+        margin-right: 6px;
+        font-family: ui-monospace, monospace;
+    }
+
+    /* 섹션 타이틀 */
+    .section-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 12px;
+        margin-top: 24px;
+    }
+
+    /* 페이지 헤더 */
+    .page-title {
+        font-size: 24px;
+        font-weight: 700;
+        color: #111;
+        margin: 0;
+    }
+    .page-sub {
+        font-size: 13px;
+        color: #888;
+        margin-top: 2px;
+    }
+
+    /* Streamlit 기본 요소 정리 */
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    header[data-testid="stHeader"] { display: none; }
+    div[data-testid="stToolbar"] { display: none; }
+
+    /* 다크모드 대비 — Expander 라이트 톤 강제 */
+    [data-testid="stExpander"] {
+        background: #ffffff;
+        border: 1px solid #e8e8e8;
+        border-radius: 8px;
+        margin-bottom: 8px;
+    }
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] summary p,
+    [data-testid="stExpander"] [data-testid="stMarkdownContainer"],
+    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] h1,
+    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] h2,
+    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] h3,
+    [data-testid="stExpander"] [data-testid="stCaptionContainer"] {
+        color: #222 !important;
+    }
+    [data-testid="stExpander"] [data-testid="stJson"] {
+        background: #f8f9fa;
+        border-radius: 6px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -42,16 +189,24 @@ def load_snapshot(end_date_iso: str, lookback_days: int = 400) -> dict:
     return run_snapshot(end_date=date.fromisoformat(end_date_iso), lookback_days=lookback_days)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_us_snapshot(end_date_iso: str) -> dict:
+    from pipeline.us_pipeline import run_us_snapshot
+    return run_us_snapshot(end_date=date.fromisoformat(end_date_iso))
+
+
 # ── 헤더 ──────────────────────────────────────────────────
-st.title("KOSPI Risk Intelligence Dashboard")
-col_header_l, col_header_r = st.columns([3, 1])
-with col_header_l:
-    selected_date = st.date_input("분석 기준일", value=date(2026, 4, 30))
-with col_header_r:
-    st.write("")  # spacing
+col_title, col_date, col_btn = st.columns([5, 2, 1])
+with col_title:
+    st.markdown('<p class="page-title">KOSPI Risk Intelligence</p>', unsafe_allow_html=True)
+    st.markdown('<p class="page-sub">통합 리스크 모니터링 대시보드</p>', unsafe_allow_html=True)
+with col_date:
+    selected_date = st.date_input("분석 기준일", value=date(2026, 4, 30), label_visibility="collapsed")
+with col_btn:
     if st.button("🔄 새로고침", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+
 
 # ── 데이터 로드 ────────────────────────────────────────────
 try:
@@ -61,31 +216,147 @@ except Exception as e:
     st.error(f"파이프라인 오류: {type(e).__name__}: {e}")
     st.stop()
 
-# 알림 배너
-render_alerts(result["alerts"])
 
-st.divider()
+# ── Alert 영역 ─────────────────────────────────────────────
+ALERT_LABELS: dict[str, str] = {
+    "ALT-01": "통합 점수 급등",
+    "ALT-02": "단일 Critical 등급 발생",
+    "ALT-03": "변동성 급등 (5일 전 대비 30%↑)",
+    "ALT-04": "거래량 급감 3일 연속",
+    "ALT-05": "외국인 집중 순매도",
+    "ALT-06": "이격도 임계 이탈",
+    "ALT-07": "MDD 임계 도달 (-15%)",
+    "ALT-08": "매크로 이벤트 중첩",
+    "ALT-09": "자본유출 경고 (SCN-01)",
+    "ALT-10": "긴축 압력 경고 (SCN-02)",
+    "ALT-11": "스태그플레이션 경고 (SCN-03)",
+    "ALT-12": "유동성 위기 경고 (SCN-04)",
+}
+_ALERT_STYLE = {
+    3: ("alert-critical", "🔴", "Critical"),
+    2: ("alert-warning",  "🟡", "Warning"),
+    1: ("alert-info",     "🔵", "Watch"),
+}
 
-# ── [1] [2] 행 — 게이지 + 레이더 ──────────────────────────
-c1, c2 = st.columns([1, 2])
+if result["alerts"]:
+    for aid in result["alerts"]:
+        try:
+            lvl = alert_level(aid)
+        except KeyError:
+            continue
+        css, icon, label = _ALERT_STYLE[lvl]
+        desc = ALERT_LABELS.get(aid, "")
+        st.markdown(
+            f'<div class="{css}">{icon} <strong>{label}</strong> — '
+            f'<code>{aid}</code> {desc}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ── 메트릭 카드 4개 ────────────────────────────────────────
+score      = result["score"]
+score_band = result["score_band"]
+phase      = result["phase"]
+crit_cnt   = result["critical_count"]
+sys_esc    = result["system_critical_escalation"]
+
+score_color = "#EF4444" if score >= 3.0 else "#F59E0B" if score >= 2.0 else "#10B981"
+phase_color = {"bullish": "#10B981", "bearish": "#EF4444", "sideways": "#F59E0B"}.get(phase, "#666")
+crit_color  = "#EF4444" if crit_cnt > 0 else "#10B981"
+esc_color   = "#EF4444" if sys_esc else "#10B981"
+esc_label   = "활성" if sys_esc else "비활성"
+
+c1, c2, c3, c4 = st.columns(4)
 with c1:
-    st.subheader("통합 리스크 점수")
-    st.plotly_chart(make_gauge(result["score"], result["score_band"]),
-                    use_container_width=True)
-    st.markdown(
-        f"**Phase**: `{result['phase']}` · "
-        f"**Critical**: `{result['critical_count']}` · "
-        f"**System Esc**: `{result['system_critical_escalation']}`"
-    )
-
+    st.markdown(f"""
+    <div class="metric-card">
+        <p class="label">통합 리스크 점수</p>
+        <p class="value" style="color: {score_color};">{score:.2f}</p>
+        <p class="sub">{score_band} · 4.0 만점</p>
+    </div>
+    """, unsafe_allow_html=True)
 with c2:
-    st.subheader("리스크 유형별")
-    grades = {k: result["risks"][k]["grade"]
-              for k in ("market", "volatility", "liquidity", "downside", "macro")}
-    st.plotly_chart(make_radar(grades), use_container_width=True)
+    st.markdown(f"""
+    <div class="metric-card">
+        <p class="label">시장 국면 (Phase)</p>
+        <p class="value" style="color: {phase_color};">{phase}</p>
+        <p class="sub">동적 가중치 적용 중</p>
+    </div>
+    """, unsafe_allow_html=True)
+with c3:
+    st.markdown(f"""
+    <div class="metric-card">
+        <p class="label">Critical 등급 리스크</p>
+        <p class="value" style="color: {crit_color};">{crit_cnt} <span style="font-size:14px;color:#999;">/ 5</span></p>
+        <p class="sub">5개 리스크 중</p>
+    </div>
+    """, unsafe_allow_html=True)
+with c4:
+    st.markdown(f"""
+    <div class="metric-card">
+        <p class="label">긴급 탈출 (System Esc)</p>
+        <p class="value" style="color: {esc_color};">{esc_label}</p>
+        <p class="sub">{"즉시 대응 필요" if sys_esc else "정상 상태"}</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# ── [3] 시계열 추이 ──────────────────────────────────────
-st.subheader("리스크 추이")
+
+# ── 리스크 유형별 수평 바 차트 ────────────────────────────
+st.markdown('<p class="section-title">리스크 유형별 분석</p>', unsafe_allow_html=True)
+
+_RISK_LABEL = {
+    "market":     "시장",
+    "volatility": "변동성",
+    "liquidity":  "유동성",
+    "downside":   "하방",
+    "macro":      "매크로",
+}
+risk_items = [(_RISK_LABEL[k], result["risks"][k]["grade"])
+              for k in ("volatility", "downside", "macro", "market", "liquidity")]
+risk_items.sort(key=lambda x: x[1], reverse=True)
+
+def _bar_color(v: int) -> str:
+    if v >= 4: return "#EF4444"
+    if v >= 3: return "#F59E0B"
+    if v >= 2: return "#FBBF24"
+    return "#10B981"
+
+bar_labels = [r[0] for r in risk_items]
+bar_values = [r[1] for r in risk_items]
+bar_colors = [_bar_color(v) for v in bar_values]
+
+fig_bar = go.Figure(go.Bar(
+    x=bar_values,
+    y=bar_labels,
+    orientation="h",
+    marker_color=bar_colors,
+    text=[f"{v}" for v in bar_values],
+    textposition="outside",
+    textfont=dict(size=13, color="#333"),
+    hovertemplate="%{y}: grade %{x}<extra></extra>",
+))
+fig_bar.add_vline(x=3, line_dash="dash", line_color="#EF4444", line_width=1,
+                  annotation_text="Critical", annotation_position="top",
+                  annotation_font_size=11, annotation_font_color="#EF4444")
+fig_bar.add_vline(x=2, line_dash="dash", line_color="#F59E0B", line_width=1,
+                  annotation_text="Warning", annotation_position="top",
+                  annotation_font_size=11, annotation_font_color="#F59E0B")
+fig_bar.update_layout(
+    height=260,
+    margin=dict(l=0, r=60, t=20, b=10),
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)",
+    xaxis=dict(range=[0, 4.6], showgrid=True, gridcolor="#f0f0f0",
+               zeroline=False, tickfont=dict(size=12, color="#999"),
+               dtick=1),
+    yaxis=dict(tickfont=dict(size=13, color="#555"), autorange="reversed"),
+    font=dict(family="sans-serif"),
+)
+st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
+
+
+# ── 리스크 추이 (KOSPI / HV20 / MDD) ─────────────────────
+st.markdown('<p class="section-title">리스크 추이</p>', unsafe_allow_html=True)
 series = result["series"]
 st.plotly_chart(
     make_trend(series["close"], series["hv20"], series["mdd60"],
@@ -93,10 +364,12 @@ st.plotly_chart(
     use_container_width=True,
 )
 
-# ── [4] [5] 행 — 전략 + 인사이트 ──────────────────────────
-c3, c4 = st.columns([1, 2])
-with c3:
-    st.subheader("전략 / 자산 배분")
+
+# ── 전략·자산 배분 / 인사이트 ─────────────────────────────
+col_strat, col_ins = st.columns([1, 2])
+
+with col_strat:
+    st.markdown('<p class="section-title">전략 / 자산 배분</p>', unsafe_allow_html=True)
     a = result["strategy"]["allocation"]
     st.plotly_chart(
         make_allocation(a["equity"], a["bond"], a["cash"],
@@ -104,16 +377,20 @@ with c3:
         use_container_width=True,
     )
 
-with c4:
-    st.subheader("인사이트")
-    EMOJI = {"critical": "🚨", "high": "⚠️", "medium": "📊",
-             "low": "ℹ️", "terminal": "🎯"}
+with col_ins:
+    st.markdown('<p class="section-title">인사이트</p>', unsafe_allow_html=True)
     for ins in result["insights"]:
-        emoji = EMOJI.get(ins["priority"], "•")
-        st.markdown(f"{emoji} **[{ins['id']}]** {ins['text']}")
+        priority = ins.get("priority", "low")
+        st.markdown(
+            f'<div class="insight-card p-{priority}">'
+            f'<span class="id">[{ins["id"]}]</span>{ins["text"]}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
 
 # ── 세부 정보 (Expanders) ─────────────────────────────────
-st.divider()
+st.markdown('<p class="section-title">세부 정보</p>', unsafe_allow_html=True)
 
 with st.expander("📊 리스크 기여도"):
     st.bar_chart(result["contributions"])
@@ -141,9 +418,9 @@ with st.expander("🔍 5 리스크 세부 (JSON)"):
 with st.expander("⚙️ 동적 가중치"):
     st.json(result["weights"])
 
+
 # ── Phase 2: 섹터 리스크 분석 ──────────────────────────────
-st.divider()
-st.subheader("섹터 리스크 분석 (Phase 2)")
+st.markdown('<p class="section-title">섹터 리스크 분석 (Phase 2)</p>', unsafe_allow_html=True)
 
 try:
     from pipeline.sector_pipeline import run_sector_analysis
@@ -161,14 +438,9 @@ try:
 except Exception as e:
     st.warning(f"섹터 분석 오류: {type(e).__name__}: {e}")
 
-# ── Phase 3: S&P500 분석 + 글로벌 비교 ───────────────────────
-st.divider()
-st.subheader("S&P 500 리스크 분석 (Phase 3)")
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_us_snapshot(end_date_iso: str) -> dict:
-    from pipeline.us_pipeline import run_us_snapshot
-    return run_us_snapshot(end_date=date.fromisoformat(end_date_iso))
+# ── Phase 3: S&P500 분석 + 글로벌 비교 ────────────────────
+st.markdown('<p class="section-title">S&P 500 리스크 분석 (Phase 3)</p>', unsafe_allow_html=True)
 
 try:
     from layer7_visualization.comparison import (
@@ -207,3 +479,7 @@ try:
 
 except Exception as e:
     st.warning(f"S&P500 분석 오류: {type(e).__name__}: {e}")
+
+
+st.divider()
+st.caption("ℹ️ KOSPI Risk Intelligence Dashboard · 통합 리스크 모니터링 시스템")

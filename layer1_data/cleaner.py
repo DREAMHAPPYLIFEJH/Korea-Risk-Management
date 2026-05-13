@@ -1,4 +1,5 @@
-"""데이터 정제 — Skills.md §5 Layer 1 정제 로직.
+"""
+데이터 정제 — Skills.md §5 Layer 1 정제 로직.
 
 - Forward Fill (공휴일/비영업일/API 실패 시 전일 값 유지)
 - 3σ 이상값 탐지 + rolling mean 대체 + outlier_flag
