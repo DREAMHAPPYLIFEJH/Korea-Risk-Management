@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import pickle
 import sys
 from datetime import date
 from pathlib import Path
@@ -30,14 +29,10 @@ if str(ROOT) not in sys.path:
 import plotly.graph_objects as go
 import streamlit as st
 
+from pipeline.orchestrator import run_snapshot
 from layer7_visualization.trend import make_trend
 from layer7_visualization.allocation import make_allocation
 from rules.alert import alert_level
-
-# 데모 모드 — Streamlit Cloud 배포용
-# 키움 API 의 IP 제약으로 클라우드에서 라이브 호출 불가 → pickle 정적 데이터 사용
-DEMO_DIR  = ROOT / "data"
-DEMO_DATE = date(2026, 4, 30)
 
 
 st.set_page_config(
@@ -189,44 +184,36 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-@st.cache_resource(show_spinner=False)
-def load_demo(name: str):
-    with open(DEMO_DIR / name, "rb") as f:
-        return pickle.load(f)
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_snapshot(end_date_iso: str, lookback_days: int = 400) -> dict:
+    return run_snapshot(end_date=date.fromisoformat(end_date_iso), lookback_days=lookback_days)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_us_snapshot(end_date_iso: str) -> dict:
+    from pipeline.us_pipeline import run_us_snapshot
+    return run_us_snapshot(end_date=date.fromisoformat(end_date_iso))
 
 
 # ── 헤더 ──────────────────────────────────────────────────
-col_title, col_date = st.columns([5, 2])
+col_title, col_date, col_btn = st.columns([5, 2, 1])
 with col_title:
     st.markdown('<p class="page-title">KOSPI Risk Intelligence</p>', unsafe_allow_html=True)
     st.markdown('<p class="page-sub">통합 리스크 모니터링 대시보드</p>', unsafe_allow_html=True)
 with col_date:
-    st.markdown(
-        f'<div style="text-align:right; padding-top:8px;">'
-        f'<span style="font-size:11px; color:#888;">분석 기준일</span><br/>'
-        f'<span style="font-size:16px; font-weight:600; color:#333;">{DEMO_DATE.strftime("%Y-%m-%d")}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-
-# ── 데모 모드 배너 ─────────────────────────────────────────
-st.markdown(
-    f'<div style="background:#EFF6FF; border-left:4px solid #3B82F6; '
-    f'border-radius:0 8px 8px 0; padding:10px 14px; margin:12px 0; '
-    f'font-size:13px; color:#1E3A5F;">'
-    f'🎬 <strong>Demo Mode</strong> &middot; {DEMO_DATE.strftime("%Y-%m-%d")} KOSPI / S&amp;P 500 '
-    f'분석 결과 (라이브 API 미연동 - 정적 데이터)'
-    f'</div>',
-    unsafe_allow_html=True,
-)
+    selected_date = st.date_input("분석 기준일", value=date(2026, 4, 30), label_visibility="collapsed")
+with col_btn:
+    if st.button("🔄 새로고침", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
 
 # ── 데이터 로드 ────────────────────────────────────────────
 try:
-    result = load_demo("demo_kospi.pkl")
-except FileNotFoundError:
-    st.error("demo_kospi.pkl 누락. `python scripts/generate_demo_data.py` 로 재생성하세요.")
+    with st.spinner("분석 중... (키움 API 일별 외국인 데이터 수집 약 30~60초)"):
+        result = load_snapshot(selected_date.isoformat())
+except Exception as e:
+    st.error(f"파이프라인 오류: {type(e).__name__}: {e}")
     st.stop()
 
 
@@ -436,9 +423,10 @@ with st.expander("⚙️ 동적 가중치"):
 st.markdown('<p class="section-title">섹터 리스크 분석 (Phase 2)</p>', unsafe_allow_html=True)
 
 try:
+    from pipeline.sector_pipeline import run_sector_analysis
     from layer7_visualization.sector_chart import make_sector_table
 
-    sector_results = load_demo("demo_sectors.pkl")
+    sector_results = run_sector_analysis(result)
     st.plotly_chart(make_sector_table(sector_results), use_container_width=True)
 
     pending = [r.sector for r in sector_results if not r.data_available]
@@ -458,7 +446,8 @@ try:
     from layer7_visualization.comparison import (
         make_comparison_gauge, make_comparison_radar, make_comparison_table,
     )
-    us_result = load_demo("demo_sp500.pkl")
+    with st.spinner("S&P500 분석 중..."):
+        us_result = load_us_snapshot(selected_date.isoformat())
 
     fred_ok = us_result.get("fred_available", False)
     if not fred_ok:
