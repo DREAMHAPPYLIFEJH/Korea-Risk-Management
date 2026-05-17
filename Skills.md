@@ -459,14 +459,58 @@ IF score_comparison_needed:
 | `adx` | > 25 | 추세 확립 |
 | `adx` | [20, 25] | 전환 구간 |
 | `adx` | < 20 | 횡보장 |
-| `mdd_60` | > −5% | Low |
-| `mdd_60` | [−10%, −5%] | Medium |
-| `mdd_60` | (−20%, −10%) | High |
-| `mdd_60` | ≤ −20% | Critical |
+| `mdd_60` | > −5% | Low (legacy 참고용) |
+| `mdd_60` | [−10%, −5%] | Medium (legacy 참고용) |
+| `mdd_60` | (−20%, −10%) | High (legacy 참고용) |
+| `mdd_60` | ≤ −20% | Critical (legacy 참고용) |
 | `var_95` | > −1.5% | Low |
 | `var_95` | [−2.5%, −1.5%] | Medium |
 | `var_95` | (−3.5%, −2.5%) | High |
 | `var_95` | ≤ −3.5% | Critical |
+
+### MC 기반 forward-looking 지표 (v6.1 추가)
+
+**문제 의식**: 위의 `mdd_60` / `mdd_252` 는 윈도우 내 단순 min/max 비율로, 시간순서를 무시하여 우상향장에서도 큰 음수가 발생함. 예: KOSPI가 2,455 → 7,493로 1년간 일직선 상승하면 `mdd_252` = −67%로 보고되어 등급이 spurious Critical로 격상됨. 이 한계를 보완하기 위해 Monte Carlo 기반 forward-looking 지표를 v6.1에서 추가 (Risk-D 등급의 1차 소스).
+
+**시뮬레이션 정의**: `simulate_paths(close, horizon, n_paths, method)` 가 현재가(`close.iloc[-1]`)에서 출발하는 `n_paths × (horizon+1)` 가격 경로를 반환. 각 경로의 *진정한* peak-to-trough MDD 분포를 산출.
+
+| 변수명 | 계산식 | 단위 |
+|--------|--------|------|
+| `mdd_60_mc.p5` | percentile(mdd_per_path, 5), horizon=60 | % |
+| `mdd_60_mc.p50` | percentile(mdd_per_path, 50), horizon=60 | % |
+| `mdd_60_mc.p95` | percentile(mdd_per_path, 95), horizon=60 | % |
+| `mdd_252_mc.{p5,p50,p95}` | 동일하게 horizon=252 | % |
+| `var_95_mc` | percentile(MC 1일 수익률 분포, 5) | % |
+| `cvar_mc` | MEAN(MC 1일 수익률 IF ≤ var_95_mc) | % |
+
+여기서:
+```
+mdd_per_path = MIN_t((path_t − running_max_t) / running_max_t) × 100
+running_max_t = MAX(path_0, …, path_t)
+```
+
+**method 옵션** (`config/constants.py::MC_METHOD`):
+- `'bootstrap'` — 과거 일별 로그수익률을 복원추출 재샘플링 (모수 가정 0, 과거 fat tail/비대칭성 보존)
+- `'student_t'` — `scipy.stats.t.fit`로 (df, loc, scale) MLE 추정 후 IID 샘플링 (이론적 fat tail)
+- `'garch'` — GARCH(1,1) 조건부 변동성 시뮬레이션 (volatility clustering 반영, `arch` 패키지)
+
+기본 설정: `MC_METHOD='bootstrap'`, `MC_N_PATHS=10_000`, `MC_LOOKBACK_DAYS=252`, `MC_SEED=42`.
+
+### MC 기반 임계값
+
+| 변수 | 구간 | 분류 |
+|------|------|------|
+| `mdd_60_mc.p50` | > −4% | Low |
+| `mdd_60_mc.p50` | (−7%, −4%] | Medium |
+| `mdd_60_mc.p50` | (−10%, −7%] | High |
+| `mdd_60_mc.p50` | ≤ −10% | Critical |
+| `mdd_60_mc.p5` | > −10% | Low |
+| `mdd_60_mc.p5` | (−18%, −10%] | Medium |
+| `mdd_60_mc.p5` | (−25%, −18%] | High |
+| `mdd_60_mc.p5` | ≤ −25% | Critical |
+| `var_95_mc` | (`var_95`와 동일 임계값 재사용) | — |
+
+(252일 임계값 및 모든 경계는 `config/thresholds.py::MDD_*_MC_*` 참조. 초기 임계값은 1차 추정 — 실측 분포 기반 보정 예정.)
 
 ---
 
@@ -996,6 +1040,8 @@ RETURN output
 
 **기본 가중치**: 10%
 
+> **v6.1 변경**: MC 기반 forward-looking 지표를 1차 등급 소스로 채택. Legacy `mdd_60` / `var_95`는 indicators dict에 참고용으로 보존하되 등급에는 미반영. CR-02는 MC 3개 sub-grade (p50/p5/var_mc)의 MAX로 재정의.
+>
 > **단일 Critical 예외**: Risk-D만 단독 Critical → 전체 시스템 자동 격상 없음 (OVR-06)
 
 #### JSON Output Schema
@@ -1006,37 +1052,41 @@ RETURN output
   "grade": 1,
   "score": 1,
   "triggered_conditions": [],
-  "reason": "MDD_60 등급과 VaR_95 등급 중 CR-02(MAX) 적용; 하방 단독 Critical 시 OVR-06 예외 처리",
+  "reason": "MAX(mc_p50_grade, mc_p5_grade, var_mc_grade) 적용; 단독 Critical 시 OVR-06 예외",
   "details": {
     "risk_type":      "downside",
     "grade_label":    "Low | Medium | High | Critical",
     "weight_default": 0.10,
     "timestamp":      "YYYY-MM-DD",
     "indicators": {
-      "mdd_60":  0.0,
-      "mdd_252": 0.0,
-      "var_95":  0.0,
-      "cvar":    0.0
+      "mdd_60":     0.0,
+      "mdd_252":    0.0,
+      "var_95":     0.0,
+      "cvar":       0.0,
+      "mdd_60_mc":  {"p5": 0.0, "p50": 0.0, "p95": 0.0, "mean": 0.0},
+      "mdd_252_mc": {"p5": 0.0, "p50": 0.0, "p95": 0.0, "mean": 0.0},
+      "var_95_mc":  0.0,
+      "cvar_mc":    0.0
     },
     "sub_grades": {
-      "mdd_grade": 1,
-      "var_grade": 1
+      "mdd_grade_legacy": 1,
+      "var_grade_legacy": 1,
+      "mc_p50_grade":     1,
+      "mc_p5_grade":      1,
+      "var_mc_grade":     1
     },
     "flags": {
-      "recovery_signal": "fast | slow | unknown"
+      "recovery_signal": "fast | slow | unknown",
+      "mc_used":         true
     },
-    "conflict_rule": "MAX(mdd_grade, var_grade)",
+    "conflict_rule": "MAX(mc_p50_grade, mc_p5_grade, var_mc_grade)",
     "condition_candidates": [
-      "mdd_60_gt_minus5",
-      "mdd_60_lte_minus5",
-      "mdd_60_lte_minus10",
-      "mdd_60_lte_minus20",
-      "var_95_gt_minus1.5",
-      "var_95_lte_minus1.5",
-      "var_95_lte_minus2.5",
-      "var_95_lte_minus3.5",
-      "cr02_max_applied",
-      "ovr06_single_critical_exception"
+      "mdd_60_gt_minus5", "mdd_60_lte_minus5", "mdd_60_lte_minus10", "mdd_60_lte_minus20",
+      "var_95_gt_minus1.5", "var_95_lte_minus1.5", "var_95_lte_minus2.5", "var_95_lte_minus3.5",
+      "mc_p50_low", "mc_p50_medium", "mc_p50_high", "mc_p50_critical",
+      "mc_p5_low", "mc_p5_medium", "mc_p5_high", "mc_p5_critical",
+      "var_mc_low", "var_mc_medium", "var_mc_high", "var_mc_critical",
+      "cr02_max_applied", "ovr06_single_critical_exception", "mc_fallback_to_legacy"
     ]
   }
 }
@@ -1045,92 +1095,77 @@ RETURN output
 #### Grade Logic (IF/THEN)
 
 ```python
-output = {
-    "risk_id": "RISK-D",
-    "grade":   None,
-    "score":   None,
-    "triggered_conditions": [],
-    "reason":  "",
-    "details": {
-        "risk_type":      "downside",
-        "grade_label":    "",
-        "weight_default": 0.10,
-        "timestamp":      "YYYY-MM-DD",
-        "indicators": {
-            "mdd_60":  mdd_60,
-            "mdd_252": mdd_252,
-            "var_95":  var_95,
-            "cvar":    cvar
-        },
-        "sub_grades": {
-            "mdd_grade": None,
-            "var_grade": None
-        },
-        "flags": {
-            "recovery_signal": None
-        },
-        "conflict_rule": "MAX(mdd_grade, var_grade)",
-        "condition_candidates": [
-            "mdd_60_gt_minus5", "mdd_60_lte_minus5",
-            "mdd_60_lte_minus10", "mdd_60_lte_minus20",
-            "var_95_gt_minus1.5", "var_95_lte_minus1.5",
-            "var_95_lte_minus2.5", "var_95_lte_minus3.5",
-            "cr02_max_applied", "ovr06_single_critical_exception"
-        ]
-    }
-}
+# ── Legacy 등급 (indicators 표시용, fallback용) ──────────
+IF mdd_60 <= -20:    mdd_grade_legacy = 4    # Critical
+ELIF mdd_60 <= -10:  mdd_grade_legacy = 3    # High
+ELIF mdd_60 <= -5:   mdd_grade_legacy = 2    # Medium
+ELSE:                mdd_grade_legacy = 1    # Low
 
-# ── MDD_60 등급 ───────────────────────────────────────────
-IF mdd_60 <= -20:         mdd_grade = 4    # Critical
-ELIF mdd_60 <= -10:       mdd_grade = 3    # High
-ELIF mdd_60 <= -5:        mdd_grade = 2    # Medium
-ELSE:                     mdd_grade = 1    # Low
+IF var_95 <= -3.5:   var_grade_legacy = 4
+ELIF var_95 <= -2.5: var_grade_legacy = 3
+ELIF var_95 <= -1.5: var_grade_legacy = 2
+ELSE:                var_grade_legacy = 1
 
-# ── VaR_95 등급 ───────────────────────────────────────────
-IF var_95 <= -3.5:        var_grade = 4    # Critical
-ELIF var_95 <= -2.5:      var_grade = 3    # High
-ELIF var_95 <= -1.5:      var_grade = 2    # Medium
-ELSE:                     var_grade = 1    # Low
+# ── MC 입력 가용성 확인 ─────────────────────────────────
+IF mdd_60_mc IS NOT None AND var_95_mc IS NOT None:
+    mc_used = True
 
-# ── CR-02 충돌 해소 (IF/THEN) ────────────────────────────
-IF mdd_grade != var_grade:
-    downside_grade = MAX(mdd_grade, var_grade)
+    # MC p50 (typical case 60d MDD) 등급
+    IF mdd_60_mc.p50 <= -10:  mc_p50_grade = 4
+    ELIF mdd_60_mc.p50 <= -7: mc_p50_grade = 3
+    ELIF mdd_60_mc.p50 <= -4: mc_p50_grade = 2
+    ELSE:                     mc_p50_grade = 1
+
+    # MC p5 (worst-case 60d MDD) 등급
+    IF mdd_60_mc.p5 <= -25:   mc_p5_grade = 4
+    ELIF mdd_60_mc.p5 <= -18: mc_p5_grade = 3
+    ELIF mdd_60_mc.p5 <= -10: mc_p5_grade = 2
+    ELSE:                     mc_p5_grade = 1
+
+    # MC 1일 VaR 등급 (var_95와 동일 임계값)
+    IF var_95_mc <= -3.5:     var_mc_grade = 4
+    ELIF var_95_mc <= -2.5:   var_mc_grade = 3
+    ELIF var_95_mc <= -1.5:   var_mc_grade = 2
+    ELSE:                     var_mc_grade = 1
+
+    # CR-02 (v6.1 재정의): 세 MC sub-grade의 MAX
+    downside_grade = MAX(mc_p50_grade, mc_p5_grade, var_mc_grade)
+    IF LEN(UNIQUE(mc_p50_grade, mc_p5_grade, var_mc_grade)) > 1:
+        triggered.APPEND("cr02_max_applied")
+
+    triggered.APPEND(p50_condition(mc_p50_grade))   # mc_p50_low|medium|high|critical
+    triggered.APPEND(p5_condition(mc_p5_grade))
+    triggered.APPEND(var_mc_condition(var_mc_grade))
+
 ELSE:
-    downside_grade = mdd_grade
+    # MC 입력 미가용 → legacy 식으로 fallback (CR-02 원래 정의)
+    mc_used = False
+    mc_p50_grade = mc_p5_grade = var_mc_grade = None
+    downside_grade = MAX(mdd_grade_legacy, var_grade_legacy)
+    triggered.APPEND("mc_fallback_to_legacy")
+    # + 기존 mdd_60_*, var_95_* 조건 APPEND
 
 # ── 회복 기간 플래그 (Section 3에서 산출된 mdd_recovery_months 사용)
-IF mdd_recovery_months < 3:
-    recovery_signal = "fast"
-ELIF mdd_recovery_months > 6:
-    recovery_signal = "slow"
-ELSE:
-    recovery_signal = "unknown"
+IF mdd_recovery_months < 3:     recovery_signal = "fast"
+ELIF mdd_recovery_months > 6:   recovery_signal = "slow"
+ELSE:                           recovery_signal = "unknown"
 
-# ── triggered_conditions 수집 ────────────────────────────
-triggered_conditions = []
-
-IF mdd_60 <= -20:    triggered_conditions.APPEND("mdd_60_lte_minus20")
-ELIF mdd_60 <= -10:  triggered_conditions.APPEND("mdd_60_lte_minus10")
-ELIF mdd_60 <= -5:   triggered_conditions.APPEND("mdd_60_lte_minus5")
-ELSE:                triggered_conditions.APPEND("mdd_60_gt_minus5")
-
-IF var_95 <= -3.5:   triggered_conditions.APPEND("var_95_lte_minus3.5")
-ELIF var_95 <= -2.5: triggered_conditions.APPEND("var_95_lte_minus2.5")
-ELIF var_95 <= -1.5: triggered_conditions.APPEND("var_95_lte_minus1.5")
-ELSE:                triggered_conditions.APPEND("var_95_gt_minus1.5")
-
-IF mdd_grade != var_grade:
-    triggered_conditions.APPEND("cr02_max_applied")
-# ovr06_single_critical_exception: STEP 4에서 타 등급 확정 후 평가
-
-# ── JSON 출력 연결 ────────────────────────────────────────
-output["triggered_conditions"] = triggered_conditions
-output["reason"] = "downside_risk grade=" + STRING(downside_grade) + " based on " + JOIN(triggered_conditions, ", ")
-output["grade"] = downside_grade
-output["score"] = downside_grade
+# ── 최종 출력 ────────────────────────────────────────────
+output.grade = downside_grade
+output.score = downside_grade
+output.details.sub_grades = {
+    "mdd_grade_legacy": mdd_grade_legacy, "var_grade_legacy": var_grade_legacy,
+    "mc_p50_grade":     mc_p50_grade,     "mc_p5_grade":      mc_p5_grade,
+    "var_mc_grade":     var_mc_grade,
+}
+output.details.flags = {"recovery_signal": recovery_signal, "mc_used": mc_used}
 
 RETURN output
 ```
+
+**v6.1 주의사항**:
+- Legacy `mdd_grade_legacy` / `var_grade_legacy`는 `sub_grades`에 보존되지만 `downside_grade` 결정에는 영향 없음 (MC 우선). 미반영 사실은 대시보드 비교 패널에서 명시.
+- CR-02 원 정의 `MAX(mdd_grade, var_grade)`는 MC 미가용 시 fallback 경로에서만 적용. MC 가용 시에는 `MAX(mc_p50_grade, mc_p5_grade, var_mc_grade)`로 확장됨 — §12 CR-02 참조.
 
 ---
 
@@ -1953,14 +1988,23 @@ ELSE:
     volatility_grade = hv_grade
 ```
 
-### CR-02: 하방 리스크 내부 (MDD vs VaR)
+### CR-02: 하방 리스크 내부 (MC sub-grades)
+
+**v6.1 재정의**: MC 가용 시 세 MC sub-grade의 MAX. MC 미가용 시 legacy fallback (원래 정의).
 
 ```python
-IF mdd_grade != var_grade:
-    downside_grade = MAX(mdd_grade, var_grade)
+IF mdd_60_mc IS NOT None AND var_95_mc IS NOT None:
+    # MC 가용 — 세 sub-grade의 MAX
+    downside_grade = MAX(mc_p50_grade, mc_p5_grade, var_mc_grade)
 ELSE:
-    downside_grade = mdd_grade
+    # Legacy fallback (원 CR-02)
+    IF mdd_grade_legacy != var_grade_legacy:
+        downside_grade = MAX(mdd_grade_legacy, var_grade_legacy)
+    ELSE:
+        downside_grade = mdd_grade_legacy
 ```
+
+상세 등급 산정 식은 §7 Risk-D Grade Logic 참조.
 
 ### CR-03: 전략 리스크 충돌 우선순위
 

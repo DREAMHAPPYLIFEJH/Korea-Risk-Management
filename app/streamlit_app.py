@@ -201,7 +201,7 @@ with col_title:
     st.markdown('<p class="page-title">KOSPI Risk Intelligence</p>', unsafe_allow_html=True)
     st.markdown('<p class="page-sub">통합 리스크 모니터링 대시보드</p>', unsafe_allow_html=True)
 with col_date:
-    selected_date = st.date_input("분석 기준일", value=date(2026, 4, 30), label_visibility="collapsed")
+    selected_date = st.date_input("분석 기준일", value=date.today(), label_visibility="collapsed")
 with col_btn:
     if st.button("🔄 새로고침", use_container_width=True):
         st.cache_data.clear()
@@ -359,7 +359,7 @@ st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": Fal
 st.markdown('<p class="section-title">리스크 추이</p>', unsafe_allow_html=True)
 series = result["series"]
 st.plotly_chart(
-    make_trend(series["close"], series["hv20"], series["mdd60"],
+    make_trend(series["close"], series["hv20"], series["mdd60_mc_p50"],
                ma20=series["ma20"], ma60=series["ma60"]),
     use_container_width=True,
 )
@@ -396,6 +396,8 @@ with st.expander("📊 리스크 기여도"):
     st.bar_chart(result["contributions"])
 
 with st.expander("🔍 5 리스크 세부 (JSON)"):
+    import pandas as pd
+
     for k, r in result["risks"].items():
         st.markdown(
             f"### {r['risk_id']} {k.upper()} — "
@@ -404,6 +406,66 @@ with st.expander("🔍 5 리스크 세부 (JSON)"):
         st.caption(f"Reason: {r['reason']}")
         if r["triggered_conditions"]:
             st.caption("Triggered: " + " · ".join(f"`{t}`" for t in r["triggered_conditions"]))
+
+        # Risk-D 전용: Legacy vs MC 비교 패널
+        if k == "downside":
+            ind = r["details"]["indicators"]
+            sg  = r["details"]["sub_grades"]
+            mc60  = ind.get("mdd_60_mc") or {}
+            mc252 = ind.get("mdd_252_mc") or {}
+
+            st.markdown("**Legacy(historical) vs MC(forward-looking) 비교**")
+
+            comp = pd.DataFrame({
+                "Metric":  ["MDD_60 (%)", "MDD_252 (%)", "VaR_95 (%)", "CVaR (%)"],
+                "Legacy":  [
+                    f'{ind["mdd_60"]:.2f}',
+                    f'{ind["mdd_252"]:.2f}',
+                    f'{ind["var_95"]:.2f}',
+                    f'{ind["cvar"]:.2f}',
+                ],
+                "MC p5":   [
+                    f'{mc60.get("p5", float("nan")):.2f}'  if mc60  else "—",
+                    f'{mc252.get("p5", float("nan")):.2f}' if mc252 else "—",
+                    f'{ind.get("var_95_mc", float("nan")):.2f}' if ind.get("var_95_mc") is not None else "—",
+                    f'{ind.get("cvar_mc", float("nan")):.2f}'   if ind.get("cvar_mc")   is not None else "—",
+                ],
+                "MC p50":  [
+                    f'{mc60.get("p50", float("nan")):.2f}'  if mc60  else "—",
+                    f'{mc252.get("p50", float("nan")):.2f}' if mc252 else "—",
+                    "—", "—",
+                ],
+                "MC p95":  [
+                    f'{mc60.get("p95", float("nan")):.2f}'  if mc60  else "—",
+                    f'{mc252.get("p95", float("nan")):.2f}' if mc252 else "—",
+                    "—", "—",
+                ],
+            })
+            st.dataframe(comp, hide_index=True, use_container_width=True)
+
+            grade_tbl = pd.DataFrame({
+                "Source":           ["Legacy MDD", "Legacy VaR", "MC p50", "MC p5", "MC VaR"],
+                "Sub-grade (1~4)":  [
+                    sg.get("mdd_grade_legacy"),
+                    sg.get("var_grade_legacy"),
+                    sg.get("mc_p50_grade"),
+                    sg.get("mc_p5_grade"),
+                    sg.get("var_mc_grade"),
+                ],
+                "→ 최종 grade 기여": [
+                    "참고용 (등급 미반영)",
+                    "참고용 (등급 미반영)",
+                    "MAX 후보",
+                    "MAX 후보",
+                    "MAX 후보",
+                ],
+            })
+            st.dataframe(grade_tbl, hide_index=True, use_container_width=True)
+            st.caption(
+                f"최종 grade = MAX(mc_p50, mc_p5, var_mc) = "
+                f"**{r['grade']}** ({r['details']['grade_label']})"
+            )
+
         cols = st.columns(2)
         with cols[0]:
             st.markdown("**Indicators**")

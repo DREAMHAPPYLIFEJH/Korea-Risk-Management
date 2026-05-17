@@ -82,6 +82,38 @@ MDD_RECOVERY_FAST = 3           # < 3 빠른 회복
 MDD_RECOVERY_SLOW = 6           # > 6 장기 침체
 
 # ─────────────────────────────────────────────────────────────
+# Risk-D MC 기반 임계값 — Monte Carlo 분포 percentile별
+# ─────────────────────────────────────────────────────────────
+# 의미: simulate_paths(close, horizon=60, n_paths=10000)로 생성한 경로들의
+#   peak-to-trough MDD 분포에서
+#     p50 = 중위 시나리오 ("일반적으로 예상되는 60일 최대 낙폭")
+#     p5  = 워스트 5% 시나리오 ("나쁜 경우의 60일 최대 낙폭")
+# 두 percentile을 각각 4단계 등급화 후 MAX 적용 (Risk-D evaluate에서).
+# 초기 임계값은 1차 추정 — task #6 검증 단계에서 실측 분포 기반으로 보정 예정.
+
+# 60일 forward MDD - p50 (typical case)
+MDD_60_MC_P50_CRITICAL = -10
+MDD_60_MC_P50_HIGH     = -7
+MDD_60_MC_P50_MEDIUM   = -4
+
+# 60일 forward MDD - p5 (worst case)
+MDD_60_MC_P5_CRITICAL = -25
+MDD_60_MC_P5_HIGH     = -18
+MDD_60_MC_P5_MEDIUM   = -10
+
+# 252일 forward MDD - p50
+MDD_252_MC_P50_CRITICAL = -18
+MDD_252_MC_P50_HIGH     = -12
+MDD_252_MC_P50_MEDIUM   = -7
+
+# 252일 forward MDD - p5
+MDD_252_MC_P5_CRITICAL = -40
+MDD_252_MC_P5_HIGH     = -28
+MDD_252_MC_P5_MEDIUM   = -15
+
+# MC 기반 1일 VaR — 기존 VAR_95_CRITICAL/HIGH/MEDIUM 재사용 (분포만 다르고 의미 동일)
+
+# ─────────────────────────────────────────────────────────────
 # Risk-E 매크로 3E-1 수준 판정 — Skills.md §7 Risk-E 3E-1
 # ─────────────────────────────────────────────────────────────
 

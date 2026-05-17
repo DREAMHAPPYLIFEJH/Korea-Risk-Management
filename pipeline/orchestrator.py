@@ -36,6 +36,7 @@ from layer2_indicator import volatility as v_ind
 from layer2_indicator import liquidity as l_ind
 from layer2_indicator import downside as d_ind
 from layer2_indicator import derived as derived_ind
+from layer2_indicator.monte_carlo import simulate_paths, mc_mdd_p50_series
 
 # Layer 3
 from layer3_risk import market as risk_market
@@ -139,6 +140,16 @@ def run_snapshot(
     var95_s = d_ind.var_95(close, 252)
     cvar95_s = d_ind.cvar_95(close, 252)
 
+    # MC forward-looking 메트릭 — Risk-D 등급 산정 입력
+    paths_60  = simulate_paths(close, horizon=60)
+    paths_252 = simulate_paths(close, horizon=252)
+    mdd_60_mc_dict  = d_ind.mc_mdd_percentiles(paths_60)
+    mdd_252_mc_dict = d_ind.mc_mdd_percentiles(paths_252)
+    var_cvar_mc     = d_ind.mc_var_cvar_1d(paths_60)
+
+    # MC p50 60일 MDD 시계열 (시각화용)
+    mdd60_mc_p50_s = mc_mdd_p50_series(close, horizon=60, n_paths=2_000)
+
     # 최신 영업일 스칼라
     last = kospi.index[-1]
 
@@ -228,6 +239,10 @@ def run_snapshot(
     risk_d = risk_downside.evaluate(
         mdd_60=mdd60, mdd_252=mdd252, var_95=var95, cvar=cvar95,
         mdd_recovery_months=mdd_recovery_v,
+        mdd_60_mc=mdd_60_mc_dict,
+        mdd_252_mc=mdd_252_mc_dict,
+        var_95_mc=var_cvar_mc["var"],
+        cvar_mc=var_cvar_mc["cvar"],
         timestamp=timestamp,
     )
     risk_e = risk_macro.evaluate(
@@ -353,7 +368,8 @@ def run_snapshot(
             "close":  close,
             "ma20":   ma20_s, "ma60": ma60_s, "ma120": ma120_s,
             "hv20":   hv20_s,
-            "mdd60":  mdd60_s,
+            "mdd60":  mdd60_s,              # legacy window min/max (참고용)
+            "mdd60_mc_p50": mdd60_mc_p50_s, # MC 기반 forward-looking p50 (UI 기본)
             "var95":  var95_s,
             "vol_ratio": vol_ratio_s,
         },

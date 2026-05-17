@@ -111,6 +111,14 @@ FRED_SERIES = {
     "m2":       "M2SL",       # M2 통화량
 }
 
+# ── Monte Carlo 설정 — Risk-D MC 기반 지표 ──────────────────
+
+MC_N_PATHS = 10_000           # 시뮬레이션 경로 수
+MC_METHOD = "bootstrap"       # 'bootstrap' | 'student_t' | 'garch'
+MC_SEED = 42                  # 재현성용 시드 (None이면 매번 다른 결과)
+MC_LOOKBACK_DAYS = 252        # 수익률 분포 추정에 사용할 과거 윈도우
+
+
 # ── Phase 2 — 섹터 정의 ──────────────────────────────────────
 
 # 분석 대상 섹터 목록
