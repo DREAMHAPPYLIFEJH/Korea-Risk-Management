@@ -3,8 +3,8 @@
 > KOSPI / S&P 500 시장의 리스크를 5가지 유형으로 구조화하고, 가중 통합 점수 기반으로
 > 투자 전략과 자산 배분 방향을 자동 제시하는 분석 대시보드.
 
-**기준 스펙**: [`Skills.md`](./Skills.md) v6.0 / [기획서 v2.0](./금융_투자_대시보드_서비스_기획서.md)
-**진행률**: Phase 1 (KOSPI) · Phase 2 (섹터) · Phase 3 (S&P500 비교) · UI 개편 완료
+**기준 스펙**: [`Skills.md`](./Skills.md) v6.1 / [기획서 v2.0](./금융_투자_대시보드_서비스_기획서.md)
+**진행률**: Phase 1 (KOSPI) · Phase 2 (섹터) · Phase 3 (S&P500 비교) · UI 개편 · **Risk-D Monte Carlo 도입** 완료
 
 ---
 
@@ -44,7 +44,7 @@
 | 변동성 (Volatility) | 25% | HV20 / HV60 (KOSPI: VKOSPI 보류 / US: VIX 적용) |
 | 매크로 (Macro) | 20% | KOSPI: 환율/금리/CPI/외국인/M2 · US: DXY/연준금리/CPI/M2 |
 | 유동성 (Liquidity) | 15% | 거래량 비율 / 거래대금 / 연속 감소 |
-| 하방 (Downside) | 10% | MDD / VaR / CVaR / 회복 기간 |
+| 하방 (Downside) | 10% | **Monte Carlo MDD (p50/p5/var_mc)** / VaR / CVaR / 회복 기간 |
 
 ### 통합 점수 → 전략 매핑
 
@@ -64,6 +64,10 @@
 - **5개 리스크 독립 등급 산정** (Low / Medium / High / Critical 4단계)
 - **시장 국면별 동적 가중치** — bullish / bearish / sideways 3 세트
 - **매크로 3단계 분석** — 수준 판정(6 지표) → 이벤트 탐지(10종) → 복합 시나리오(4종)
+- **Risk-D Monte Carlo 평가 (v6.1)** — bootstrap / Student's t / GARCH(1,1) 3 method로
+  10,000 경로 시뮬레이션 → 60일 forward MDD의 p50/p5 분위수 + 1일 VaR/CVaR 산출 →
+  `MAX(mc_p50_grade, mc_p5_grade, var_mc_grade)`로 등급 산정.
+  Legacy 윈도우 min/max 방식(우상향장 spurious Critical 문제) 해결, legacy 값은 참고용 유지.
 - **OVR 6종 + CR 5종** — 단일 Critical 시 최소 방어 강제, 시나리오 발동 시 자동 격상
 - **인사이트 11종 + R1~R5** — 복합 조건 우선 / 반복 억제 / 전략 권고 종결 강제
 - **알림 12종** — Watch / Warning / Critical_Alert 3등급
@@ -309,7 +313,8 @@ Korea-Risk-Management/
 │   ├── price.py                   # MA / 이격도 / ADX / consec_decline
 │   ├── volatility.py              # HV20/60 / vol_ratio_hv
 │   ├── liquidity.py               # vol_ratio / val_ratio / vol_streak
-│   ├── downside.py                # MDD / VaR / CVaR
+│   ├── downside.py                # MDD / VaR / CVaR (legacy) + MC 메트릭 추출
+│   ├── monte_carlo.py             # v6.1 — simulate_paths (bootstrap/student_t/garch)
 │   ├── derived.py                 # fx_change / MA flags / M2 / MDD 회복
 │   └── sector_indicator.py        # Phase 2 — beta / HV / RS / MDD
 │
@@ -392,6 +397,18 @@ Korea-Risk-Management/
 | 알림 | ALT-02 (단일 Critical) + ALT-07 (MDD 임계) |
 | 인사이트 | INS-02 (외국인 매도 지속) + INS-03 (방어 권고) |
 
+### 2026-05-17 KOSPI 분석 — Risk-D MC 도입 효과 검증
+
+| 항목 | Legacy (v6.0) | MC (v6.1) |
+|------|--------------|-----------|
+| mdd_60 | -36.70% (spurious) | p5: -21.58 / **p50: -9.96** / p95: -4.31 |
+| mdd_252 | -66.20% (spurious) | p5: -29.45 / **p50: -17.12** / p95: -10.07 |
+| var_95 | -3.26% | -3.32% (거의 동일) |
+| Risk-D 등급 | **Critical (4)** — spurious | **High (3)** — 정상 |
+| 통합 점수 | (Extreme/Danger 추정) | **2.35 → Alert** |
+
+> KOSPI가 1년간 2,455 → 7,493로 약 3배 상승 (실제 시세 가정). Legacy MDD는 윈도우 min/max 비율로 강세장에서도 -67% 같은 spurious Critical을 발생시켰으나, MC forward-looking 평가에서는 "현재가에서 출발하는 60일 미래 경로의 typical MDD = -10% (High)"로 정상화. 사용자가 직관적으로 기대하는 "3배 오른 자산의 downside potential"과 일치.
+
 ### Skills.md §8 계산 예시 검증
 
 > 시장 High(3) + 변동성 High(3) + 매크로 Medium(2) + 유동성 Medium(2) + 하방 High(3)
@@ -408,8 +425,8 @@ Korea-Risk-Management/
 | §3 Derived | `layer2_indicator/derived.py` |
 | §4 STEP 1~10 | `pipeline/orchestrator.py` (STEP 10 = `app/streamlit_app.py`) |
 | §5 Layer 1 | `layer1_data/*` (VKOSPI 보류 노트 §5에 명시) |
-| §6 Layer 2 | `layer2_indicator/*` |
-| §7 Risk-A~E | `layer3_risk/*` (공통 `schema.py` 6+9 필드) |
+| §6 Layer 2 | `layer2_indicator/*` (v6.1 — `monte_carlo.py` MC 시뮬레이션 추가) |
+| §7 Risk-A~E | `layer3_risk/*` (공통 `schema.py` 6+9 필드, Risk-D v6.1 듀얼 그레이딩) |
 | §8 Scoring | `layer4_scoring/*` |
 | §9 Strategy | `layer5_strategy/strategy.py` |
 | §10 Insight | `layer6_insight/insight.py` |
@@ -434,6 +451,7 @@ Korea-Risk-Management/
 | **한국 공휴일 캘린더 미반영** | `pd.bdate_range`가 5/1·5/5 등 포함 → ffill로 흡수 | `exchange_calendars` 추가 시 |
 | **pytest 자동 회귀 테스트 부분 작성** | 일부 모듈은 인라인 검증 / phase별 통합 테스트 추가 필요 | 운영 배포 전 |
 | **등급 시계열 차트 (252일 grade 추이)** | 현재는 close/HV20/MDD60 raw 차트만 | 일별 grade 백테스트 시 |
+| **MC 임계값 실측 기반 캘리브레이션** | 초기 임계값(p50: -4/-7/-10, p5: -10/-18/-25)은 1차 추정. KOSPI 장기 백테스트로 분위수 분포 검증 필요 | 운영 배포 전 |
 | **멀티 사용자 STATE 격리** | 단일 JSON 파일 (단일 사용자 가정) | 멀티 인스턴스 배포 시 |
 
 ### VKOSPI 보류 처리 (Phase 1 KOSPI 전용)
@@ -479,6 +497,9 @@ Phase 1에서는 **Risk-B를 HV20 단독으로 등급 산정**합니다.
 | MDD | Maximum Drawdown — 특정 기간 내 고점 대비 최대 하락 비율 |
 | VaR | Value at Risk — 일정 신뢰구간 내 최대 예상 손실 (95% 분위수) |
 | CVaR | Conditional VaR — VaR 초과 손실 발생 시 조건부 평균 |
+| Monte Carlo MDD | 현재가에서 출발하는 N개 forward 가격 경로의 peak-to-trough MDD 분포 (v6.1) |
+| p50 / p5 | MC 분포의 50번째 / 5번째 percentile — "전형적 시나리오" / "워스트 5% 시나리오" |
+| GARCH(1,1) | 조건부 변동성 모델 — `σ²_t = ω + α·ε²_{t-1} + β·σ²_{t-1}` (volatility clustering) |
 | ADX | Average Directional Index — 추세의 강도 (방향 무관, 14일 기준) |
 | VKOSPI | 코스피200 옵션 가격 기반 내재 변동성 지수 |
 | VIX | S&P500 옵션 가격 기반 내재 변동성 지수 (Phase 3) |
