@@ -17,16 +17,18 @@ def make_trend(
     mdd_thresholds: tuple[tuple[float, str, str], ...] = (
         (-4, "Medium", "dot"), (-7, "High", "dash"), (-10, "Critical", "solid"),
     ),
+    price_label: str = "KOSPI 종가",
 ) -> go.Figure:
-    """3-pane 시계열: KOSPI close / HV20 / MDD.
+    """3-pane 시계열: price / HV20 / MDD.
 
     mdd60 인자는 MC p50 60일 MDD 시계열을 기본으로 받음 (v6.1).
     mdd_label / mdd_thresholds 인자로 legacy 시각화도 가능.
+    price_label로 시장별 종가 라벨 변경 가능 (KOSPI / S&P 500 등).
     """
     fig = make_subplots(
         rows=3, cols=1,
         shared_xaxes=True,
-        subplot_titles=("KOSPI 종가", "HV20 (연율 %)", mdd_label),
+        subplot_titles=(price_label, "HV20 (연율 %)", mdd_label),
         vertical_spacing=0.07,
         row_heights=[0.45, 0.275, 0.275],
     )
