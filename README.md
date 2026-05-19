@@ -6,6 +6,8 @@
 **기준 스펙**: [`Skills.md`](./Skills.md) v6.0 / [기획서 v2.0](./금융_투자_대시보드_서비스_기획서.md)
 **진행률**: Phase 1 (KOSPI) · Phase 2 (섹터) · Phase 3 (S&P500 비교) · UI 개편 완료
 
+사이트 데모 url : https://korea-risk-management-e5uuu6yhksndvhtk8tyhxv.streamlit.app/
+
 ---
 
 ## 목차
