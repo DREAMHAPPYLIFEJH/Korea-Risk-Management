@@ -2530,4 +2530,193 @@ make_sector_table(sector_results) → Plotly Table Figure
 
 ---
 
+# Phase 3 — S&P 500 통합 분석 + 글로벌 비교
+
+> **상태**: 구현 완료. 라이브 운영 중. 변경 이력은 P3-6 참조.
+
+## P3-1. 개요
+
+KOSPI 5리스크 체계(A~E)를 S&P 500 시장에도 그대로 적용하여, 두 시장을 동일한
+기준으로 모니터링하고 직접 비교할 수 있게 한다.
+
+- 5리스크 등급 산정 로직(Layer 3~6, Rules) **전부 재사용**. 데이터 소스만 교체
+- Risk-B(변동성)는 VIX를 `vkospi` 자리에 직접 전달 (KOSPI의 `vkospi=None` 보류
+  분기 활용)
+- Risk-E(매크로)만 미국 전용 모듈(`layer3_risk/us_macro.py`)로 신규 작성
+  — Fed 금리 / CPI YoY / DXY / M2 4지표 기반 US-E-1~3 직렬 평가
+- 통합 점수 / 전략 / Override / Alert / Insight 전부 KOSPI와 동일 룰
+
+## P3-2. 데이터 소스
+
+| 항목 | 소스 | 비고 |
+|------|------|------|
+| S&P 500 OHLCV | yfinance `^GSPC` | KOSPI ka20006 대응 |
+| VIX | yfinance `^VIX` | VKOSPI 대응 (KOSPI는 보류 중) |
+| DXY (달러 인덱스) | yfinance `DX-Y.NYB` | 항상 가용 — 최소한 매크로 평가 유지 |
+| Fed 기준금리 | FRED `FEDFUNDS` (월별) | 키 미설정 시 None |
+| 미국 CPI | FRED `CPIAUCSL` (월별, 절대 지수) | **YoY % 변환 후 평가** (P3-6 참조) |
+| 미국 M2 | FRED `M2SL` (월별, 절대값) | **YoY 성장률 변환 후 m2_contraction 판정** |
+
+**Graceful degradation**: FRED 키 미설정 시 `fed_rate/cpi_yoy/m2_contraction = None`
+으로 호출 → DXY 단독으로 매크로 평가 (Phase 1 VKOSPI 보류와 동일 패턴).
+
+## P3-3. 파이프라인 (`pipeline/us_pipeline.py`)
+
+`run_us_snapshot(end_date) → dict` — Phase 1 `run_snapshot()`과 **동일 키 구조**
+반환. 단 `market="us"`, `fred_available` 필드 추가.
+
+레이어 재사용:
+- Layer 2 지표 계산: 기존 `layer2_indicator/*` 전부 재사용
+- Layer 3 Risk A~D: 기존 모듈 재사용 (VIX → `vkospi` 파라미터로 직접 전달)
+- Layer 3 Risk E: `layer3_risk/us_macro.py` 신규
+- Layer 4~6 / Rules: 기존 모듈 전부 재사용
+
+Risk-D MC 메트릭 (orchestrator와 동일): `simulate_paths(close, horizon=60/252)`
+→ `mc_mdd_percentiles` / `mc_var_cvar_1d` → `risk_downside.evaluate(mdd_60_mc=...,
+mdd_252_mc=..., var_95_mc=..., cvar_mc=...)` 전달. `series["mdd60_mc_p50"]`도 추가.
+
+## P3-4. UI 통합 (`app/streamlit_app.py`)
+
+- 헤더 아래 **시장 선택 라디오** `st.radio(["KOSPI", "S&P 500"], horizontal=True)`
+- 선택값에 따라 `load_snapshot` 또는 `load_us_snapshot` 호출 → 공통 함수
+  `render_market_dashboard(result, *, price_label)` 로 동일 대시보드 렌더링
+  (Alert / 메트릭 4종 / 리스크 바차트 / 트렌드 차트 / 전략·인사이트 /
+  5개 Risk expander + Risk-D MC 비교 패널)
+- 트렌드 차트 첫 패널 라벨은 `price_label` 인자로 시장별 분기
+  ("KOSPI 종가" / "S&P 500 종가")
+- 섹터 분석(P2)은 **KOSPI 한정** (S&P GICS 섹터 데이터/매핑 미구현)
+- KOSPI vs S&P 500 비교 섹션은 하단 **on-demand expander** — 펼치면 양쪽 캐시
+  활용하여 gauge/radar/table 표시
+
+## P3-5. Phase 3 알려진 제한
+
+| 항목 | 내용 | 해결 조건 |
+|------|------|-----------|
+| S&P 섹터 분석 없음 | GICS 11개 섹터 데이터 소스/매핑 미구현 | XLK/XLF/XLV 등 SPDR ETF fetcher + 매핑 추가 시 활성화 |
+| FRED 무료 한도 | 분당 ~120회. 캐시(`@st.cache_data ttl=3600`)로 사실상 미체감 | 한도 초과 시 백오프 추가 |
+| MC 임계값 캘리브레이션 미보정 | KOSPI와 동일 임계값 사용 (S&P 분포 특성 미반영) | S&P 실측 분포 기반 별도 임계값 도입 검토 |
+
+## P3-6. 변경 이력 (2026-05-20 세션)
+
+> 커밋 `1f715f2` — `FRED API 활성화 + S&P 500 통합 대시보드`
+
+### A. FRED API 활성화
+
+- `.env`에 `FRED_API_KEY` 등록 → `fred_available: True`
+- `FredClient`의 `get_fed_rate/get_us_cpi/get_us_m2` 정상 동작 확인
+  (2026-05-20: FEDFUNDS 3.64%, CPIAUCSL 332.4, M2SL 22,686)
+
+### B. us_pipeline 매크로 입력 단위 버그 수정
+
+발견된 사전 버그: `us_pipeline.py`가 FRED CPI/M2의 **절대 지수**를 `risk_us_macro.evaluate`의
+`cpi_yoy` 인자에 그대로 전달 → `CPI_YOY_CAUTION=2.5` 등 % 단위 임계값과 단위 불일치.
+
+수정:
+- CPI: 월별 절대 지수 → `(CPI / CPI.shift(12) − 1) × 100` YoY % 변환
+- M2: 동일 방식으로 YoY 성장률 산출 후 전월 대비 %p 차이로 `m2_contraction` 판정
+- `cpi_delta`는 YoY %의 전월 대비 차이 (CPI_DELTA_SURGE 임계값 단위와 정합)
+
+검증: `cpi_yoy 332.4(index) → 3.95(%)` 정상화. Risk-E grade 2 → 3 보정.
+
+### C. us_pipeline에 Risk-D Monte Carlo wiring
+
+기존 us_pipeline은 `risk_downside.evaluate`에 MC 인자를 전달하지 않아 legacy
+fallback 모드로 동작 (sub_grades 전부 None). orchestrator(KOSPI)와 동일하게
+`simulate_paths` + `mc_mdd_percentiles` + `mc_var_cvar_1d` 호출하여 MC 인자
+전달. `series["mdd60_mc_p50"]`도 추가하여 트렌드 차트 정상화.
+
+### D. Streamlit UI 시장 선택 라디오 도입
+
+기존: S&P 500 섹션이 비교 gauge/radar/table만 있어 KOSPI 대비 빈약.
+변경: KOSPI 렌더링 블록을 `render_market_dashboard(result)` 함수로 추출 → 라디오
+선택값에 따라 동일 함수로 양 시장 모두 동일 레벨 대시보드 표시. 비교 섹션은
+on-demand expander로 변경.
+
+### E. `layer7_visualization/trend.py` price_label 인자 추가
+
+`make_trend()`의 첫 서브플롯 제목이 `"KOSPI 종가"`로 하드코딩 → S&P 탭에서도
+잘못 표시. `price_label: str = "KOSPI 종가"` 인자 추가하여 시장별 분기 가능.
+
+### F. `rules/override.py::apply_ovr06` Critical 0개 케이스 버그 수정
+
+발견된 사전 버그: 함수가 OVR-06 발동 여부만 분기하고 `critical_count == 0`
+케이스를 처리하지 않아, 모든 리스크가 안전(Critical 0개)일 때도 `True` 반환
+→ `system_critical_escalation = True`로 잘못 표시.
+
+수정: `return True` → `return count_critical(risks) >= 1`.
+
+검증 결과 (2026-05-20):
+- S&P 500: `critical_count=0`, `system_critical_escalation=False` (정상 — 이전 True 버그)
+- KOSPI: `critical_count=2`, `system_critical_escalation=True` (회귀 없음)
+
+KOSPI에서는 평소 `critical_count >= 1`이라 우연히 가려져 있던 버그.
+
+---
+
+# Phase 4 — 보조 마켓 컨텍스트 지표 (계획)
+
+> **상태**: 계획만 정리됨. 구현 미시작. 향후 별도 작업으로 진행.
+
+## P4-0. 설계 원칙 — 옵션 A: 보조 메트릭 (등급 영향 없음)
+
+기존 5리스크 체계 (A~E) 및 통합 점수에는 **반영하지 않음**. 화면에만 표시하여
+중장기 트렌드/거품/자본유출 압력 등을 사용자가 시각적으로 모니터링할 수 있게 함.
+
+선택 이유:
+- 임계값 캘리브레이션 미보유 (예: "KOSPI PER > N에서 다음 6개월 평균 MDD가 X%였다" 같은 통계 미정)
+- 등급 룰부터 만들면 데이터 노이즈에 휘둘림
+- 일단 화면에 띄워 몇 주 관찰 후 통계 잡힌 뒤 Risk-A 통합(옵션 B) 또는 Risk-F 신설(옵션 C)로 승격 가능
+
+**향후 승격 시 검토할 옵션**:
+- **옵션 B**: Risk-A(시장)에 통합 — 추세 + 밸류에이션 합본. 가중치 재산정 필요
+- **옵션 C**: Risk-F(밸류에이션) 신설 — 5리스크 → 6리스크. 가중치/Override/Insight 전반 재설계 (대공사)
+
+## P4-1. 추가 지표 4종
+
+| 지표 | 의미 | 데이터 소스 | 표시 형태 (안) |
+|------|------|-------------|----------------|
+| **KOSPI 전체 PER** | 시장 평균 주가수익비율 — 거품/저평가 판단 | `pykrx.get_market_fundamental_by_date("1001")` (KOSPI 지수 코드) | 메트릭 카드 + 시계열 차트 (12개월 추세) |
+| **KOSPI 전체 PBR** | 시장 평균 주가순자산비율 — 자산 대비 가치 | 동상 | 메트릭 카드 + 시계열 차트 |
+| **신용잔고 / 미수금** | 개인 레버리지 과열 신호 — 한국 시장 대표 거품 척도 | `pykrx.get_shorting_balance_by_date` 등 (pykrx 가용성 확인 필요. 미보유 시 KOFIA freesis.kofia.or.kr scraping) | 메트릭 카드 + 추세 |
+| **한미 기준금리 차이** | 자본 유출 압력 — 역전(미국>한국) 시 외국인 매도 동조 | ECOS — 이미 둘 다 받음: `EcosClient.get_base_rate` (일별) + `get_us_base_rate` (월별). 단순 뺄셈 | 메트릭 카드 (현재 차이 + 추세 라인) |
+| **VKOSPI** | KOSPI200 옵션 내재변동성 — 시장 fear gauge | `pykrx.get_index_ohlcv_by_date` V-KOSPI200 (yfinance에는 없음 — 확인됨) | 메트릭 카드 + 시계열 차트 (HV20과 병치 가능) |
+
+## P4-2. 데이터 소스 정리
+
+- **ECOS (기존)** — 한미 금리차에 활용. 추가 fetcher 불필요
+- **pykrx (신규)** — KOSPI PER/PBR + VKOSPI + (가능 시) 신용잔고. `requirements.txt`에 `pykrx>=1.0.x` 한 줄. KRX 정보데이터시스템(data.krx.co.kr) 공식 wrapper
+- **KOFIA scraping (조건부)** — pykrx로 신용잔고/미수금 미커버 시 fallback. https://freesis.kofia.or.kr
+
+신규 모듈: `layer1_data/krx_fetcher.py` (pykrx wrapper) — pykrx가 무거우면 함수별 lazy import 권장.
+
+## P4-3. 파이프라인/UI 통합 위치
+
+- **Layer 1**: `krx_fetcher.py` 신규
+- **Layer 2**: 신규 indicator 모듈 불필요 (raw 값을 그대로 표시)
+- **Layer 3~6**: 변경 없음 (등급 룰 미반영)
+- **pipeline/orchestrator.py**: STEP 1 끝부분에 보조 지표 수집 추가, `result["market_context"]` dict로 묶어 반환
+- **layer7_visualization**: 신규 차트 함수 (PER/PBR 추세, VKOSPI 등). 기존 `make_trend` 재사용도 가능
+- **app/streamlit_app.py**: `render_market_dashboard()` 안 또는 별도 expander로 "마켓 컨텍스트" 섹션 추가 (KOSPI 전용)
+
+## P4-4. 단계 분할
+
+| Phase | 작업 | 의존성 | 예상 사이즈 |
+|-------|------|--------|-------------|
+| **A** | 한미 금리차 (ECOS 활용 — 데이터 다 있음) | 없음 | 30분 |
+| **B** | pykrx 도입 → PER/PBR + VKOSPI fetcher | requirements 수정 + 신규 모듈 | 1~2시간 |
+| **C** | 신용잔고/미수금 (pykrx 가용성에 따라 KOFIA fallback) | B 완료 후 | 30분~1시간 |
+| **D** | streamlit "마켓 컨텍스트" 섹션 — 4종 메트릭 + 추세 차트 | A~C 데이터 완성 | 1시간 |
+
+각 Phase별로 검증 + 커밋. 한 번에 묶는 것보다 데이터 소스 검증을 분리해서 진행.
+
+## P4-5. 알려진 미확정 사항
+
+- **pykrx 신용잔고/미수금 함수 정확한 시그니처** — 라이브러리 docs 또는 실제 시도 후 확정
+- **VKOSPI pykrx 지수 코드** — V-KOSPI200 정확한 ticker (`1003` 후보)
+- **표시 단위** — PER/PBR은 절대값, 금리차는 %p, 신용잔고는 조원/억원, VKOSPI는 지수
+- **시계열 라벨** — 한국어/영문 일관성 (다른 차트와 동일하게 한국어 우선)
+- **메트릭 카드 vs 차트** — 현재값만 vs 12개월 추세까지 보여줄지 선택
+
+---
+
 *기준: 금융_투자_대시보드_서비스_기획서 v2.0 — Skills.md v6.0 Normalized JSON Schema · Fully Executable*

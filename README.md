@@ -4,7 +4,7 @@
 > 투자 전략과 자산 배분 방향을 자동 제시하는 분석 대시보드.
 
 **기준 스펙**: [`Skills.md`](./Skills.md) v6.1 / [기획서 v2.0](./금융_투자_대시보드_서비스_기획서.md)
-**진행률**: Phase 1 (KOSPI) · Phase 2 (섹터) · Phase 3 (S&P500 비교) · UI 개편 · **Risk-D Monte Carlo 도입** 완료
+**진행률**: Phase 1 (KOSPI) · Phase 2 (섹터) · Phase 3 (S&P500 통합 분석) · UI 개편 · **Risk-D Monte Carlo 도입** · **시장 선택 통합 대시보드** 완료 · Phase 4 (보조 마켓 컨텍스트) 계획
 
 ---
 
@@ -79,17 +79,22 @@
 - **상대 강도(RS) 지표** — 시장 대비 강세/약세 판정
 - **통합 점수 비영향 설계** — Phase 1 점수·전략에 영향 없는 독립 섹션 (PDF §4 준수)
 
-### Phase 3 — S&P 500 비교 분석
+### Phase 3 — S&P 500 통합 분석
 - **레이어 재사용 + US 매크로 교체** — Layer 2~6 + Rules 전부 재사용, Layer 1·Risk-E만 신규
 - **VIX 직접 적용** — KOSPI 의 VKOSPI 보류와 달리 Risk-B 의 `vkospi` 파라미터로 VIX 직접 전달
-- **FRED 데이터 옵셔널** — `FRED_API_KEY` 미설정 시 DXY 단독 평가로 graceful degradation
-- **글로벌 비교 시각화** — KOSPI vs S&P500 게이지·레이더·등급 표 나란히 표시
+- **FRED 데이터 옵셔널** — `FRED_API_KEY` 미설정 시 DXY 단독 평가로 graceful degradation. CPI/M2는 월별 절대 지수 → YoY % 변환 후 평가
+- **Risk-D MC 양쪽 wiring** — KOSPI orchestrator와 동일하게 `simulate_paths` + MC 메트릭 전달 → S&P 측 Risk-D도 듀얼 그레이딩 활성화
+- **시장 선택 라디오 + 공통 대시보드** — `app/streamlit_app.py` 상단에 `st.radio(["KOSPI", "S&P 500"])` → 공통 함수 `render_market_dashboard()`로 양 시장 동일 레벨 UI 렌더링 (Alert/메트릭/리스크 차트/트렌드/전략/Risk expander 전부 동일)
+- **글로벌 비교 시각화** — KOSPI vs S&P500 게이지·레이더·등급 표 (on-demand expander로 양쪽 캐시 활용)
 
 ### UI 개편
+- **시장 선택 라디오** — 헤더 아래 `KOSPI / S&P 500` 토글, 선택값에 따라 공통 함수 `render_market_dashboard()`로 동일 레벨 대시보드 렌더링
 - **메트릭 카드 4개** — 통합 점수 · Phase · Critical 등급 수 · System Esc
 - **수평 바 차트** — 리스크 유형별 등급을 내림차순 + Critical(3)/Warning(2) 기준선
 - **컬러 코드 알림 카드** — Critical(red) / Warning(amber) / Watch(blue) border-left
 - **인사이트 우선순위 카드** — priority별 좌측 컬러 바
+- **Risk-D MC 비교 패널** — Risk expander에 Legacy vs MC(p5/p50/p95) 4컬럼 표 + sub-grade 표
+- **시장 비교 on-demand expander** — KOSPI vs S&P500 게이지/레이더/등급 표 (펼쳐야 양쪽 캐시 로드)
 - **라이트 테마 강제** — `.streamlit/config.toml` 로 OS 다크모드 무관 일관된 색상
 
 ---
@@ -226,9 +231,9 @@ for r in sectors:
 | `sp500_ohlcv` | S&P 500 OHLCV | yfinance `^GSPC` | 일별 |
 | `vix` | VIX 변동성 지수 (KOSPI VKOSPI 대응) | yfinance `^VIX` | 일별 |
 | `dxy` | 달러 인덱스 (KOSPI 환율 대응) | yfinance `DX-Y.NYB` | 일별 |
-| `fed_rate` | 연준 정책금리 (옵셔널) | FRED `DFF` | 일별 |
-| `us_cpi_yoy` | 미국 CPI YoY (옵셔널) | FRED `CPIAUCSL` (자체 YoY) | 월별 |
-| `us_m2` | 미국 M2 통화량 YoY (옵셔널) | FRED `M2SL` (자체 YoY) | 월별 |
+| `fed_rate` | 연준 정책금리 (옵셔널) | FRED `FEDFUNDS` | 월별 |
+| `us_cpi_yoy` | 미국 CPI YoY (옵셔널) | FRED `CPIAUCSL` (월별 절대 지수 → 12개월 차분으로 YoY %) | 월별 |
+| `us_m2` | 미국 M2 통화량 YoY (옵셔널) | FRED `M2SL` (월별 절대값 → YoY 성장률 → m2_contraction 판정) | 월별 |
 
 **API 키 관리**: `.env` 파일에 보관 → `.gitignore`로 차단됨.
 **FRED 옵셔널 처리**: 키 미설정 시 fed/cpi/m2 = None → US 매크로는 DXY 단독 평가 (graceful degradation, VKOSPI 보류와 동일 패턴).
@@ -290,7 +295,7 @@ Korea-Risk-Management/
 ├── .streamlit/config.toml         # 라이트 테마 강제
 ├── CLAUDE.md                      # 협업 행동 지침
 ├── README.md                      # 본 문서
-├── Skills.md                      # 실행 스펙 v6.0 (계약 문서)
+├── Skills.md                      # 실행 스펙 v6.1 (계약 문서, Phase 2/3/4 포함)
 ├── 금융_투자_대시보드_서비스_기획서.md  # 기획서 v2.0
 ├── preceed.md                     # 진행 내역 로그
 ├── requirements.txt
@@ -435,8 +440,9 @@ Korea-Risk-Management/
 | §13 Override (OVR-01~06) | `rules/override.py` |
 | §14 Alert (ALT-01~12) | `rules/alert.py` |
 | §15 Validation Checklist | Pydantic 모델로 6+9 필드 강제 |
-| Phase 2 PDF §4 (Sector) | `layer3_risk/sector.py` + `pipeline/sector_pipeline.py` |
-| Phase 3 (S&P500 확장) | `pipeline/us_pipeline.py` + `layer3_risk/us_macro.py` |
+| Phase 2 §P2-1~P2-6 (Sector) | `layer3_risk/sector.py` + `pipeline/sector_pipeline.py` |
+| Phase 3 §P3-1~P3-6 (S&P500 통합) | `pipeline/us_pipeline.py` + `layer3_risk/us_macro.py` + `app/streamlit_app.py` (시장 선택 라디오 + `render_market_dashboard`) |
+| Phase 4 §P4-0~P4-5 (보조 마켓 컨텍스트, 계획) | 미구현 — PER/PBR / 신용잔고·미수금 / 한미 금리차 / VKOSPI |
 
 ---
 
@@ -513,7 +519,9 @@ Phase 1에서는 **Risk-B를 HV20 단독으로 등급 산정**합니다.
 
 ---
 
-*본 프로젝트는 [Skills.md](./Skills.md) v6.0의 모든 IF/THEN 분기, 임계값,
+*본 프로젝트는 [Skills.md](./Skills.md) v6.1의 모든 IF/THEN 분기, 임계값,
 규칙 ID(CR / OVR / ALT / INS)를 1:1로 매핑하여 구현했습니다. Phase 1 KOSPI 분석을
-출발점으로 Phase 2 섹터 분석 및 Phase 3 S&P500 비교까지 확장하여 시장 확장형 구조를
-실증했습니다 — `config/thresholds.py` 교체만으로 KOSPI ↔ S&P500 동일 구조 적용 가능.*
+출발점으로 Phase 2 섹터 분석, Phase 3 S&P500 통합 대시보드(시장 선택 라디오 + 공통
+렌더 함수)까지 확장하여 시장 확장형 구조를 실증했습니다 — `config/thresholds.py` 교체와
+fetcher 신규만으로 KOSPI ↔ S&P500 동일 구조 적용 가능. Phase 4는 보조 마켓 컨텍스트
+지표(PER/PBR/신용잔고/한미 금리차/VKOSPI) 도입이 계획되어 있습니다 (Skills.md §P4 참조).*

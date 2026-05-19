@@ -42,7 +42,7 @@ For multi-step tasks, state a brief plan with verify steps.
 
 ### Source of truth
 
-- **`Skills.md` is the contract document** (v6.0). Every implementation choice traces back to a section there. Threshold values, grade boundaries, rule IDs (`CR-XX`, `OVR-XX`, `ALT-XX`, `INS-XX`), JSON field structure — all live in Skills.md.
+- **`Skills.md` is the contract document** (v6.1). Every implementation choice traces back to a section there. Threshold values, grade boundaries, rule IDs (`CR-XX`, `OVR-XX`, `ALT-XX`, `INS-XX`), JSON field structure — all live in Skills.md. Phase 2 (섹터) / Phase 3 (S&P 500) / Phase 4 (보조 마켓 컨텍스트, 계획) 섹션도 동일 문서 안에 정식화.
 - When implementing or modifying behavior, **cite the Skills.md section ID in the docstring** (`# Risk-A`, `# OVR-03`, `# CR-02`, etc.). Existing code follows this convention — match it.
 - `README.md` describes user-facing behavior and architecture. `preceed.md` is a chronological progress log.
 - Do not edit Skills.md or the Korean planning PDF/MD as a side-effect of code changes.
@@ -65,7 +65,12 @@ Cross-cutting modules (allowed to be imported by multiple layers):
 - `rules/override.py`, `rules/alert.py` — `OVR-01~06`, `ALT-01~12` (구현 완료).
 - `rules/conflict.py` — `CR-01~05` 목록만 docstring으로 존재 (스텁). 실제 구현은 각 layer 내부: CR-01 → `layer3_risk/volatility.py`, CR-02 → `layer3_risk/downside.py`, CR-03 → `layer5_strategy/strategy.py`.
 
-Orchestration: `pipeline/orchestrator.py::run_snapshot()` runs STEP 1→9 in order. The dashboard entry point is `app/streamlit_app.py`, which only calls `run_snapshot()` and the Layer 7 builders.
+Orchestration:
+- `pipeline/orchestrator.py::run_snapshot()` — KOSPI, STEP 1→9 in order.
+- `pipeline/us_pipeline.py::run_us_snapshot()` — S&P 500 (Phase 3). 동일 키 구조 dict 반환 + `market="us"` / `fred_available` 필드. Layer 2~6 + Rules 전부 재사용; STEP 1만 `us_fetcher` + `fred_fetcher`로 교체, Risk-E만 `us_macro`로 교체. VIX는 `risk_volatility.evaluate(vkospi=vix, ...)`에 직접 전달 (KOSPI의 `vkospi=None` 보류 분기 활용).
+- `pipeline/sector_pipeline.py::run_sector_analysis(result)` — Phase 2 섹터, KOSPI 한정 보조 분석.
+
+The dashboard entry point is `app/streamlit_app.py`. 헤더 아래 시장 선택 라디오로 KOSPI/S&P 500 분기 → 공통 함수 `render_market_dashboard(result, *, price_label)`로 동일 본문 렌더링. 섹터 분석은 KOSPI 한정.
 
 **Hard rules** when editing:
 1. **Layer N may import only from Layer N-1, `config/`, or `rules/`.** Never sideways or upward. New cross-layer imports are a code smell — surface it.
@@ -76,7 +81,7 @@ Orchestration: `pipeline/orchestrator.py::run_snapshot()` runs STEP 1→9 in ord
 ### Phase 1 deliberate gaps
 
 These are **known and intentional** — do not "fix" them without confirming intent:
-- **VKOSPI is on hold**: no external data source available. `Risk-B` computes from HV20 alone; `vkospi`/`vkospi_grade` fields serialize as `null`. CR-01's `MAX(hv_grade, vkospi_grade)` collapses to `hv_grade`. Fetcher hookup is the only thing missing — the conditional branch is already in place.
+- **VKOSPI is on hold** (KOSPI 측): no external data source wired yet — Phase 4 계획 §P4-1에 pykrx 도입 항목으로 등록됨. `Risk-B` computes from HV20 alone; `vkospi`/`vkospi_grade` fields serialize as `null`. CR-01's `MAX(hv_grade, vkospi_grade)` collapses to `hv_grade`. Fetcher hookup is the only thing missing — the conditional branch is already in place. (S&P 500 측은 yfinance `^VIX`를 `vkospi=` 자리에 전달하여 활성화됨.)
 - **No Korean exchange holiday calendar**: `pd.bdate_range` includes 5/1, 5/5, etc. The cleaner's forward-fill absorbs this.
 - **pytest is stubbed**: tests under `tests/` exist as files but coverage is inline / manual. Treat the README's "라이브 검증 결과" section as the regression baseline.
 
@@ -88,7 +93,8 @@ All commands assume the conda env `kospi_risk` (Python 3.10–3.12) is active an
 |------|---------|
 | Install deps | `pip install -r requirements.txt` |
 | Launch dashboard | `streamlit run app/streamlit_app.py` → http://localhost:8501 |
-| Headless snapshot | `python -c "from datetime import date; from pipeline.orchestrator import run_snapshot; print(run_snapshot(date(2026,4,30)))"` |
+| Headless KOSPI snapshot | `python -c "from datetime import date; from pipeline.orchestrator import run_snapshot; print(run_snapshot(date(2026,4,30)))"` |
+| Headless S&P 500 snapshot | `python -c "from datetime import date; from pipeline.us_pipeline import run_us_snapshot; print(run_us_snapshot(date(2026,4,30)))"` |
 | Run all tests | `pytest tests/` |
 | Run one test | `pytest tests/test_pipeline.py::test_name -v` |
 
@@ -99,6 +105,7 @@ First run of `run_snapshot` takes 30–60s because `ka10051` (foreign net buying
 `.env` at repo root (gitignored). Template in `.env.example`.
 - `ECOS_API_KEY` — Bank of Korea ECOS, https://ecos.bok.or.kr/api/
 - `KIWOOM_APPKEY`, `KIWOOM_SECRETKEY` — Kiwoom Securities REST API, https://openapi.kiwoom.com
+- `FRED_API_KEY` (Phase 3, optional) — St. Louis Fed FRED, https://fredaccount.stlouisfed.org/apikey. 미설정 시 `us_pipeline`의 `fed_rate`/`cpi_yoy`/`m2_contraction`가 None → DXY 단독으로 매크로 평가 (graceful degradation).
 
 Also gitignored and **never to be committed**: `*appkey*.txt`, `*secretkey*.txt`, the Kiwoom PDF/XLS docs (copyright).
 
@@ -171,6 +178,14 @@ All modules use this import as the first non-comment line. Include it in any new
 섹터 코드는 `config/constants.py::SECTOR_CODES`에서 관리. `inds_cd`에 "?"가 있으면 API 호출 없이 `data_available=False` 반환.
 
 Skills.md 참조: `Phase 2 §P2-1 ~ P2-6`
+
+### Phase 3 us_pipeline — orchestrator와 동일 dict 계약
+
+`run_us_snapshot()`는 `run_snapshot()`과 **완전히 같은 top-level 키 집합**을 반환합니다 (+`market`, `fred_available` 두 필드만 추가). 그래서 `render_market_dashboard()` 한 함수로 두 시장 모두 렌더링 가능. 새 시장(예: 닛케이/암호화폐)을 추가할 때도 같은 계약을 따르면 UI 변경 불필요.
+
+`series` dict도 동일 키 (`close`, `ma20/60/120`, `hv20`, `mdd60`, `mdd60_mc_p50`, `var95`, `vol_ratio`). Risk-D MC 메트릭(`mdd_60_mc`, `mdd_252_mc`, `var_95_mc`, `cvar_mc`)도 양 파이프라인 모두 wiring 완료 — `simulate_paths` + `mc_mdd_percentiles` 호출 패턴은 두 곳에서 동일.
+
+Skills.md 참조: `Phase 3 §P3-1 ~ P3-6` (P3-6에 변경 이력 정리). Phase 4 계획은 `§P4-0 ~ P4-5`.
 
 ### Headless debugging without the full pipeline
 
