@@ -459,14 +459,58 @@ IF score_comparison_needed:
 | `adx` | > 25 | 추세 확립 |
 | `adx` | [20, 25] | 전환 구간 |
 | `adx` | < 20 | 횡보장 |
-| `mdd_60` | > −5% | Low |
-| `mdd_60` | [−10%, −5%] | Medium |
-| `mdd_60` | (−20%, −10%) | High |
-| `mdd_60` | ≤ −20% | Critical |
+| `mdd_60` | > −5% | Low (legacy 참고용) |
+| `mdd_60` | [−10%, −5%] | Medium (legacy 참고용) |
+| `mdd_60` | (−20%, −10%) | High (legacy 참고용) |
+| `mdd_60` | ≤ −20% | Critical (legacy 참고용) |
 | `var_95` | > −1.5% | Low |
 | `var_95` | [−2.5%, −1.5%] | Medium |
 | `var_95` | (−3.5%, −2.5%) | High |
 | `var_95` | ≤ −3.5% | Critical |
+
+### MC 기반 forward-looking 지표 (v6.1 추가)
+
+**문제 의식**: 위의 `mdd_60` / `mdd_252` 는 윈도우 내 단순 min/max 비율로, 시간순서를 무시하여 우상향장에서도 큰 음수가 발생함. 예: KOSPI가 2,455 → 7,493로 1년간 일직선 상승하면 `mdd_252` = −67%로 보고되어 등급이 spurious Critical로 격상됨. 이 한계를 보완하기 위해 Monte Carlo 기반 forward-looking 지표를 v6.1에서 추가 (Risk-D 등급의 1차 소스).
+
+**시뮬레이션 정의**: `simulate_paths(close, horizon, n_paths, method)` 가 현재가(`close.iloc[-1]`)에서 출발하는 `n_paths × (horizon+1)` 가격 경로를 반환. 각 경로의 *진정한* peak-to-trough MDD 분포를 산출.
+
+| 변수명 | 계산식 | 단위 |
+|--------|--------|------|
+| `mdd_60_mc.p5` | percentile(mdd_per_path, 5), horizon=60 | % |
+| `mdd_60_mc.p50` | percentile(mdd_per_path, 50), horizon=60 | % |
+| `mdd_60_mc.p95` | percentile(mdd_per_path, 95), horizon=60 | % |
+| `mdd_252_mc.{p5,p50,p95}` | 동일하게 horizon=252 | % |
+| `var_95_mc` | percentile(MC 1일 수익률 분포, 5) | % |
+| `cvar_mc` | MEAN(MC 1일 수익률 IF ≤ var_95_mc) | % |
+
+여기서:
+```
+mdd_per_path = MIN_t((path_t − running_max_t) / running_max_t) × 100
+running_max_t = MAX(path_0, …, path_t)
+```
+
+**method 옵션** (`config/constants.py::MC_METHOD`):
+- `'bootstrap'` — 과거 일별 로그수익률을 복원추출 재샘플링 (모수 가정 0, 과거 fat tail/비대칭성 보존)
+- `'student_t'` — `scipy.stats.t.fit`로 (df, loc, scale) MLE 추정 후 IID 샘플링 (이론적 fat tail)
+- `'garch'` — GARCH(1,1) 조건부 변동성 시뮬레이션 (volatility clustering 반영, `arch` 패키지)
+
+기본 설정: `MC_METHOD='bootstrap'`, `MC_N_PATHS=10_000`, `MC_LOOKBACK_DAYS=252`, `MC_SEED=42`.
+
+### MC 기반 임계값
+
+| 변수 | 구간 | 분류 |
+|------|------|------|
+| `mdd_60_mc.p50` | > −4% | Low |
+| `mdd_60_mc.p50` | (−7%, −4%] | Medium |
+| `mdd_60_mc.p50` | (−10%, −7%] | High |
+| `mdd_60_mc.p50` | ≤ −10% | Critical |
+| `mdd_60_mc.p5` | > −10% | Low |
+| `mdd_60_mc.p5` | (−18%, −10%] | Medium |
+| `mdd_60_mc.p5` | (−25%, −18%] | High |
+| `mdd_60_mc.p5` | ≤ −25% | Critical |
+| `var_95_mc` | (`var_95`와 동일 임계값 재사용) | — |
+
+(252일 임계값 및 모든 경계는 `config/thresholds.py::MDD_*_MC_*` 참조. 초기 임계값은 1차 추정 — 실측 분포 기반 보정 예정.)
 
 ---
 
@@ -855,6 +899,18 @@ output["score"] = volatility_grade
 RETURN output
 ```
 
+#### 관찰 노트 — HV20 상대 고점 ↔ 시장 저점
+
+> **HV20이 상대적으로 높을 때 저점이 형성되는 경향**을 점검해야 한다.
+> 변동성 등급(`hv_grade`)이 High/Critical 구간에 있고 동시에 `mdd_60`이 깊을 때는
+> 패닉 매도(capitulation) 구간일 가능성이 있어, 단순히 "리스크 = 회피"로 해석하기보다
+> **저점 확인 신호(역추세 진입 후보)**로도 함께 모니터링한다.
+>
+> - 기계적 규칙으로 등급/점수를 낮추지 않는다 (Risk-B 점수는 그대로 High/Critical 유지).
+> - Layer 6 인사이트 또는 Layer 7 시각화 단계에서 "HV20 high + MDD 깊음" 동시 발생을
+>   `vol_spike`/`mdd_60` 추세와 교차로 관찰하는 보조 신호로 사용한다.
+> - Phase 4 확장 시 백테스트 검증 대상 (현재는 정성적 관찰 항목).
+
 ---
 
 ### Risk-C: 유동성 리스크 (Liquidity Risk)
@@ -996,6 +1052,8 @@ RETURN output
 
 **기본 가중치**: 10%
 
+> **v6.1 변경**: MC 기반 forward-looking 지표를 1차 등급 소스로 채택. Legacy `mdd_60` / `var_95`는 indicators dict에 참고용으로 보존하되 등급에는 미반영. CR-02는 MC 3개 sub-grade (p50/p5/var_mc)의 MAX로 재정의.
+>
 > **단일 Critical 예외**: Risk-D만 단독 Critical → 전체 시스템 자동 격상 없음 (OVR-06)
 
 #### JSON Output Schema
@@ -1006,37 +1064,41 @@ RETURN output
   "grade": 1,
   "score": 1,
   "triggered_conditions": [],
-  "reason": "MDD_60 등급과 VaR_95 등급 중 CR-02(MAX) 적용; 하방 단독 Critical 시 OVR-06 예외 처리",
+  "reason": "MAX(mc_p50_grade, mc_p5_grade, var_mc_grade) 적용; 단독 Critical 시 OVR-06 예외",
   "details": {
     "risk_type":      "downside",
     "grade_label":    "Low | Medium | High | Critical",
     "weight_default": 0.10,
     "timestamp":      "YYYY-MM-DD",
     "indicators": {
-      "mdd_60":  0.0,
-      "mdd_252": 0.0,
-      "var_95":  0.0,
-      "cvar":    0.0
+      "mdd_60":     0.0,
+      "mdd_252":    0.0,
+      "var_95":     0.0,
+      "cvar":       0.0,
+      "mdd_60_mc":  {"p5": 0.0, "p50": 0.0, "p95": 0.0, "mean": 0.0},
+      "mdd_252_mc": {"p5": 0.0, "p50": 0.0, "p95": 0.0, "mean": 0.0},
+      "var_95_mc":  0.0,
+      "cvar_mc":    0.0
     },
     "sub_grades": {
-      "mdd_grade": 1,
-      "var_grade": 1
+      "mdd_grade_legacy": 1,
+      "var_grade_legacy": 1,
+      "mc_p50_grade":     1,
+      "mc_p5_grade":      1,
+      "var_mc_grade":     1
     },
     "flags": {
-      "recovery_signal": "fast | slow | unknown"
+      "recovery_signal": "fast | slow | unknown",
+      "mc_used":         true
     },
-    "conflict_rule": "MAX(mdd_grade, var_grade)",
+    "conflict_rule": "MAX(mc_p50_grade, mc_p5_grade, var_mc_grade)",
     "condition_candidates": [
-      "mdd_60_gt_minus5",
-      "mdd_60_lte_minus5",
-      "mdd_60_lte_minus10",
-      "mdd_60_lte_minus20",
-      "var_95_gt_minus1.5",
-      "var_95_lte_minus1.5",
-      "var_95_lte_minus2.5",
-      "var_95_lte_minus3.5",
-      "cr02_max_applied",
-      "ovr06_single_critical_exception"
+      "mdd_60_gt_minus5", "mdd_60_lte_minus5", "mdd_60_lte_minus10", "mdd_60_lte_minus20",
+      "var_95_gt_minus1.5", "var_95_lte_minus1.5", "var_95_lte_minus2.5", "var_95_lte_minus3.5",
+      "mc_p50_low", "mc_p50_medium", "mc_p50_high", "mc_p50_critical",
+      "mc_p5_low", "mc_p5_medium", "mc_p5_high", "mc_p5_critical",
+      "var_mc_low", "var_mc_medium", "var_mc_high", "var_mc_critical",
+      "cr02_max_applied", "ovr06_single_critical_exception", "mc_fallback_to_legacy"
     ]
   }
 }
@@ -1045,92 +1107,77 @@ RETURN output
 #### Grade Logic (IF/THEN)
 
 ```python
-output = {
-    "risk_id": "RISK-D",
-    "grade":   None,
-    "score":   None,
-    "triggered_conditions": [],
-    "reason":  "",
-    "details": {
-        "risk_type":      "downside",
-        "grade_label":    "",
-        "weight_default": 0.10,
-        "timestamp":      "YYYY-MM-DD",
-        "indicators": {
-            "mdd_60":  mdd_60,
-            "mdd_252": mdd_252,
-            "var_95":  var_95,
-            "cvar":    cvar
-        },
-        "sub_grades": {
-            "mdd_grade": None,
-            "var_grade": None
-        },
-        "flags": {
-            "recovery_signal": None
-        },
-        "conflict_rule": "MAX(mdd_grade, var_grade)",
-        "condition_candidates": [
-            "mdd_60_gt_minus5", "mdd_60_lte_minus5",
-            "mdd_60_lte_minus10", "mdd_60_lte_minus20",
-            "var_95_gt_minus1.5", "var_95_lte_minus1.5",
-            "var_95_lte_minus2.5", "var_95_lte_minus3.5",
-            "cr02_max_applied", "ovr06_single_critical_exception"
-        ]
-    }
-}
+# ── Legacy 등급 (indicators 표시용, fallback용) ──────────
+IF mdd_60 <= -20:    mdd_grade_legacy = 4    # Critical
+ELIF mdd_60 <= -10:  mdd_grade_legacy = 3    # High
+ELIF mdd_60 <= -5:   mdd_grade_legacy = 2    # Medium
+ELSE:                mdd_grade_legacy = 1    # Low
 
-# ── MDD_60 등급 ───────────────────────────────────────────
-IF mdd_60 <= -20:         mdd_grade = 4    # Critical
-ELIF mdd_60 <= -10:       mdd_grade = 3    # High
-ELIF mdd_60 <= -5:        mdd_grade = 2    # Medium
-ELSE:                     mdd_grade = 1    # Low
+IF var_95 <= -3.5:   var_grade_legacy = 4
+ELIF var_95 <= -2.5: var_grade_legacy = 3
+ELIF var_95 <= -1.5: var_grade_legacy = 2
+ELSE:                var_grade_legacy = 1
 
-# ── VaR_95 등급 ───────────────────────────────────────────
-IF var_95 <= -3.5:        var_grade = 4    # Critical
-ELIF var_95 <= -2.5:      var_grade = 3    # High
-ELIF var_95 <= -1.5:      var_grade = 2    # Medium
-ELSE:                     var_grade = 1    # Low
+# ── MC 입력 가용성 확인 ─────────────────────────────────
+IF mdd_60_mc IS NOT None AND var_95_mc IS NOT None:
+    mc_used = True
 
-# ── CR-02 충돌 해소 (IF/THEN) ────────────────────────────
-IF mdd_grade != var_grade:
-    downside_grade = MAX(mdd_grade, var_grade)
+    # MC p50 (typical case 60d MDD) 등급
+    IF mdd_60_mc.p50 <= -10:  mc_p50_grade = 4
+    ELIF mdd_60_mc.p50 <= -7: mc_p50_grade = 3
+    ELIF mdd_60_mc.p50 <= -4: mc_p50_grade = 2
+    ELSE:                     mc_p50_grade = 1
+
+    # MC p5 (worst-case 60d MDD) 등급
+    IF mdd_60_mc.p5 <= -25:   mc_p5_grade = 4
+    ELIF mdd_60_mc.p5 <= -18: mc_p5_grade = 3
+    ELIF mdd_60_mc.p5 <= -10: mc_p5_grade = 2
+    ELSE:                     mc_p5_grade = 1
+
+    # MC 1일 VaR 등급 (var_95와 동일 임계값)
+    IF var_95_mc <= -3.5:     var_mc_grade = 4
+    ELIF var_95_mc <= -2.5:   var_mc_grade = 3
+    ELIF var_95_mc <= -1.5:   var_mc_grade = 2
+    ELSE:                     var_mc_grade = 1
+
+    # CR-02 (v6.1 재정의): 세 MC sub-grade의 MAX
+    downside_grade = MAX(mc_p50_grade, mc_p5_grade, var_mc_grade)
+    IF LEN(UNIQUE(mc_p50_grade, mc_p5_grade, var_mc_grade)) > 1:
+        triggered.APPEND("cr02_max_applied")
+
+    triggered.APPEND(p50_condition(mc_p50_grade))   # mc_p50_low|medium|high|critical
+    triggered.APPEND(p5_condition(mc_p5_grade))
+    triggered.APPEND(var_mc_condition(var_mc_grade))
+
 ELSE:
-    downside_grade = mdd_grade
+    # MC 입력 미가용 → legacy 식으로 fallback (CR-02 원래 정의)
+    mc_used = False
+    mc_p50_grade = mc_p5_grade = var_mc_grade = None
+    downside_grade = MAX(mdd_grade_legacy, var_grade_legacy)
+    triggered.APPEND("mc_fallback_to_legacy")
+    # + 기존 mdd_60_*, var_95_* 조건 APPEND
 
 # ── 회복 기간 플래그 (Section 3에서 산출된 mdd_recovery_months 사용)
-IF mdd_recovery_months < 3:
-    recovery_signal = "fast"
-ELIF mdd_recovery_months > 6:
-    recovery_signal = "slow"
-ELSE:
-    recovery_signal = "unknown"
+IF mdd_recovery_months < 3:     recovery_signal = "fast"
+ELIF mdd_recovery_months > 6:   recovery_signal = "slow"
+ELSE:                           recovery_signal = "unknown"
 
-# ── triggered_conditions 수집 ────────────────────────────
-triggered_conditions = []
-
-IF mdd_60 <= -20:    triggered_conditions.APPEND("mdd_60_lte_minus20")
-ELIF mdd_60 <= -10:  triggered_conditions.APPEND("mdd_60_lte_minus10")
-ELIF mdd_60 <= -5:   triggered_conditions.APPEND("mdd_60_lte_minus5")
-ELSE:                triggered_conditions.APPEND("mdd_60_gt_minus5")
-
-IF var_95 <= -3.5:   triggered_conditions.APPEND("var_95_lte_minus3.5")
-ELIF var_95 <= -2.5: triggered_conditions.APPEND("var_95_lte_minus2.5")
-ELIF var_95 <= -1.5: triggered_conditions.APPEND("var_95_lte_minus1.5")
-ELSE:                triggered_conditions.APPEND("var_95_gt_minus1.5")
-
-IF mdd_grade != var_grade:
-    triggered_conditions.APPEND("cr02_max_applied")
-# ovr06_single_critical_exception: STEP 4에서 타 등급 확정 후 평가
-
-# ── JSON 출력 연결 ────────────────────────────────────────
-output["triggered_conditions"] = triggered_conditions
-output["reason"] = "downside_risk grade=" + STRING(downside_grade) + " based on " + JOIN(triggered_conditions, ", ")
-output["grade"] = downside_grade
-output["score"] = downside_grade
+# ── 최종 출력 ────────────────────────────────────────────
+output.grade = downside_grade
+output.score = downside_grade
+output.details.sub_grades = {
+    "mdd_grade_legacy": mdd_grade_legacy, "var_grade_legacy": var_grade_legacy,
+    "mc_p50_grade":     mc_p50_grade,     "mc_p5_grade":      mc_p5_grade,
+    "var_mc_grade":     var_mc_grade,
+}
+output.details.flags = {"recovery_signal": recovery_signal, "mc_used": mc_used}
 
 RETURN output
 ```
+
+**v6.1 주의사항**:
+- Legacy `mdd_grade_legacy` / `var_grade_legacy`는 `sub_grades`에 보존되지만 `downside_grade` 결정에는 영향 없음 (MC 우선). 미반영 사실은 대시보드 비교 패널에서 명시.
+- CR-02 원 정의 `MAX(mdd_grade, var_grade)`는 MC 미가용 시 fallback 경로에서만 적용. MC 가용 시에는 `MAX(mc_p50_grade, mc_p5_grade, var_mc_grade)`로 확장됨 — §12 CR-02 참조.
 
 ---
 
@@ -1953,14 +2000,23 @@ ELSE:
     volatility_grade = hv_grade
 ```
 
-### CR-02: 하방 리스크 내부 (MDD vs VaR)
+### CR-02: 하방 리스크 내부 (MC sub-grades)
+
+**v6.1 재정의**: MC 가용 시 세 MC sub-grade의 MAX. MC 미가용 시 legacy fallback (원래 정의).
 
 ```python
-IF mdd_grade != var_grade:
-    downside_grade = MAX(mdd_grade, var_grade)
+IF mdd_60_mc IS NOT None AND var_95_mc IS NOT None:
+    # MC 가용 — 세 sub-grade의 MAX
+    downside_grade = MAX(mc_p50_grade, mc_p5_grade, var_mc_grade)
 ELSE:
-    downside_grade = mdd_grade
+    # Legacy fallback (원 CR-02)
+    IF mdd_grade_legacy != var_grade_legacy:
+        downside_grade = MAX(mdd_grade_legacy, var_grade_legacy)
+    ELSE:
+        downside_grade = mdd_grade_legacy
 ```
+
+상세 등급 산정 식은 §7 Risk-D Grade Logic 참조.
 
 ### CR-03: 전략 리스크 충돌 우선순위
 
@@ -2483,6 +2539,440 @@ make_sector_table(sector_results) → Plotly Table Figure
 | SCN-04 Extreme 특이 처리 | ✅ |
 | 하방 리스크 단일 Critical 예외 | ✅ |
 | EVT-07 직접 하향 없음 규칙 | ✅ |
+
+---
+
+# Phase 3 — S&P 500 통합 분석 + 글로벌 비교
+
+> **상태**: 구현 완료. 라이브 운영 중. 변경 이력은 P3-6 참조.
+
+## P3-1. 개요
+
+KOSPI 5리스크 체계(A~E)를 S&P 500 시장에도 그대로 적용하여, 두 시장을 동일한
+기준으로 모니터링하고 직접 비교할 수 있게 한다.
+
+- 5리스크 등급 산정 로직(Layer 3~6, Rules) **전부 재사용**. 데이터 소스만 교체
+- Risk-B(변동성)는 VIX를 `vkospi` 자리에 직접 전달 (KOSPI의 `vkospi=None` 보류
+  분기 활용)
+- Risk-E(매크로)만 미국 전용 모듈(`layer3_risk/us_macro.py`)로 신규 작성
+  — Fed 금리 / CPI YoY / DXY / M2 4지표 기반 US-E-1~3 직렬 평가
+- 통합 점수 / 전략 / Override / Alert / Insight 전부 KOSPI와 동일 룰
+
+## P3-2. 데이터 소스
+
+| 항목 | 소스 | 비고 |
+|------|------|------|
+| S&P 500 OHLCV | yfinance `^GSPC` | KOSPI ka20006 대응 |
+| VIX | yfinance `^VIX` | VKOSPI 대응 (KOSPI는 보류 중) |
+| DXY (달러 인덱스) | yfinance `DX-Y.NYB` | 항상 가용 — 최소한 매크로 평가 유지 |
+| Fed 기준금리 | FRED `FEDFUNDS` (월별) | 키 미설정 시 None |
+| 미국 CPI | FRED `CPIAUCSL` (월별, 절대 지수) | **YoY % 변환 후 평가** (P3-6 참조) |
+| 미국 M2 | FRED `M2SL` (월별, 절대값) | **YoY 성장률 변환 후 m2_contraction 판정** |
+
+**Graceful degradation**: FRED 키 미설정 시 `fed_rate/cpi_yoy/m2_contraction = None`
+으로 호출 → DXY 단독으로 매크로 평가 (Phase 1 VKOSPI 보류와 동일 패턴).
+
+## P3-3. 파이프라인 (`pipeline/us_pipeline.py`)
+
+`run_us_snapshot(end_date) → dict` — Phase 1 `run_snapshot()`과 **동일 키 구조**
+반환. 단 `market="us"`, `fred_available` 필드 추가.
+
+레이어 재사용:
+- Layer 2 지표 계산: 기존 `layer2_indicator/*` 전부 재사용
+- Layer 3 Risk A~D: 기존 모듈 재사용 (VIX → `vkospi` 파라미터로 직접 전달)
+- Layer 3 Risk E: `layer3_risk/us_macro.py` 신규
+- Layer 4~6 / Rules: 기존 모듈 전부 재사용
+
+Risk-D MC 메트릭 (orchestrator와 동일): `simulate_paths(close, horizon=60/252)`
+→ `mc_mdd_percentiles` / `mc_var_cvar_1d` → `risk_downside.evaluate(mdd_60_mc=...,
+mdd_252_mc=..., var_95_mc=..., cvar_mc=...)` 전달. `series["mdd60_mc_p50"]`도 추가.
+
+## P3-4. UI 통합 (`app/streamlit_app.py`)
+
+- 헤더 아래 **시장 선택 라디오** `st.radio(["KOSPI", "S&P 500"], horizontal=True)`
+- 선택값에 따라 `load_snapshot` 또는 `load_us_snapshot` 호출 → 공통 함수
+  `render_market_dashboard(result, *, price_label)` 로 동일 대시보드 렌더링
+  (Alert / 메트릭 4종 / 리스크 바차트 / 트렌드 차트 / 전략·인사이트 /
+  5개 Risk expander + Risk-D MC 비교 패널)
+- 트렌드 차트 첫 패널 라벨은 `price_label` 인자로 시장별 분기
+  ("KOSPI 종가" / "S&P 500 종가")
+- 섹터 분석(P2)은 **KOSPI 한정** (S&P GICS 섹터 데이터/매핑 미구현)
+- KOSPI vs S&P 500 비교 섹션은 하단 **on-demand expander** — 펼치면 양쪽 캐시
+  활용하여 gauge/radar/table 표시
+
+## P3-5. Phase 3 알려진 제한
+
+| 항목 | 내용 | 해결 조건 |
+|------|------|-----------|
+| S&P 섹터 분석 없음 | GICS 11개 섹터 데이터 소스/매핑 미구현 | XLK/XLF/XLV 등 SPDR ETF fetcher + 매핑 추가 시 활성화 |
+| FRED 무료 한도 | 분당 ~120회. 캐시(`@st.cache_data ttl=3600`)로 사실상 미체감 | 한도 초과 시 백오프 추가 |
+| MC 임계값 캘리브레이션 미보정 | KOSPI와 동일 임계값 사용 (S&P 분포 특성 미반영) | S&P 실측 분포 기반 별도 임계값 도입 검토 |
+
+## P3-6. 변경 이력 (2026-05-20 세션)
+
+> 커밋 `1f715f2` — `FRED API 활성화 + S&P 500 통합 대시보드`
+
+### A. FRED API 활성화
+
+- `.env`에 `FRED_API_KEY` 등록 → `fred_available: True`
+- `FredClient`의 `get_fed_rate/get_us_cpi/get_us_m2` 정상 동작 확인
+  (2026-05-20: FEDFUNDS 3.64%, CPIAUCSL 332.4, M2SL 22,686)
+
+### B. us_pipeline 매크로 입력 단위 버그 수정
+
+발견된 사전 버그: `us_pipeline.py`가 FRED CPI/M2의 **절대 지수**를 `risk_us_macro.evaluate`의
+`cpi_yoy` 인자에 그대로 전달 → `CPI_YOY_CAUTION=2.5` 등 % 단위 임계값과 단위 불일치.
+
+수정:
+- CPI: 월별 절대 지수 → `(CPI / CPI.shift(12) − 1) × 100` YoY % 변환
+- M2: 동일 방식으로 YoY 성장률 산출 후 전월 대비 %p 차이로 `m2_contraction` 판정
+- `cpi_delta`는 YoY %의 전월 대비 차이 (CPI_DELTA_SURGE 임계값 단위와 정합)
+
+검증: `cpi_yoy 332.4(index) → 3.95(%)` 정상화. Risk-E grade 2 → 3 보정.
+
+### C. us_pipeline에 Risk-D Monte Carlo wiring
+
+기존 us_pipeline은 `risk_downside.evaluate`에 MC 인자를 전달하지 않아 legacy
+fallback 모드로 동작 (sub_grades 전부 None). orchestrator(KOSPI)와 동일하게
+`simulate_paths` + `mc_mdd_percentiles` + `mc_var_cvar_1d` 호출하여 MC 인자
+전달. `series["mdd60_mc_p50"]`도 추가하여 트렌드 차트 정상화.
+
+### D. Streamlit UI 시장 선택 라디오 도입
+
+기존: S&P 500 섹션이 비교 gauge/radar/table만 있어 KOSPI 대비 빈약.
+변경: KOSPI 렌더링 블록을 `render_market_dashboard(result)` 함수로 추출 → 라디오
+선택값에 따라 동일 함수로 양 시장 모두 동일 레벨 대시보드 표시. 비교 섹션은
+on-demand expander로 변경.
+
+### E. `layer7_visualization/trend.py` price_label 인자 추가
+
+`make_trend()`의 첫 서브플롯 제목이 `"KOSPI 종가"`로 하드코딩 → S&P 탭에서도
+잘못 표시. `price_label: str = "KOSPI 종가"` 인자 추가하여 시장별 분기 가능.
+
+### F. `rules/override.py::apply_ovr06` Critical 0개 케이스 버그 수정
+
+발견된 사전 버그: 함수가 OVR-06 발동 여부만 분기하고 `critical_count == 0`
+케이스를 처리하지 않아, 모든 리스크가 안전(Critical 0개)일 때도 `True` 반환
+→ `system_critical_escalation = True`로 잘못 표시.
+
+수정: `return True` → `return count_critical(risks) >= 1`.
+
+검증 결과 (2026-05-20):
+- S&P 500: `critical_count=0`, `system_critical_escalation=False` (정상 — 이전 True 버그)
+- KOSPI: `critical_count=2`, `system_critical_escalation=True` (회귀 없음)
+
+KOSPI에서는 평소 `critical_count >= 1`이라 우연히 가려져 있던 버그.
+
+---
+
+# Phase 4 — 보조 마켓 컨텍스트 지표 (일부 구현)
+
+> **상태**: **PER/PBR 구현 완료 (2026-05-24)** — KOSPI(KRX `MDCSTAT01402` 계열, `krx_fetcher.py`) + S&P 500(SPY ETF 근사, `us_fetcher.get_sp500_fundamental`). VKOSPI는 Phase 5에서 구현(`vkospi_fetcher.py`). 나머지(신용잔고/미수금, 한미 금리차 카드)는 계획 단계. 전부 표시 전용.
+> **표시 위치**: `render_market_dashboard` 리스크 추이(MDD) 아래 — KOSPI는 PER/PBR/배당 메트릭+추이 차트, S&P는 PER/PBR 현재값(SPY 근사, 시계열 미제공).
+
+## P4-0. 설계 원칙 — 옵션 A: 보조 메트릭 (등급 영향 없음)
+
+기존 5리스크 체계 (A~E) 및 통합 점수에는 **반영하지 않음**. 화면에만 표시하여
+중장기 트렌드/거품/자본유출 압력 등을 사용자가 시각적으로 모니터링할 수 있게 함.
+
+선택 이유:
+- 임계값 캘리브레이션 미보유 (예: "KOSPI PER > N에서 다음 6개월 평균 MDD가 X%였다" 같은 통계 미정)
+- 등급 룰부터 만들면 데이터 노이즈에 휘둘림
+- 일단 화면에 띄워 몇 주 관찰 후 통계 잡힌 뒤 Risk-A 통합(옵션 B) 또는 Risk-F 신설(옵션 C)로 승격 가능
+
+**향후 승격 시 검토할 옵션**:
+- **옵션 B**: Risk-A(시장)에 통합 — 추세 + 밸류에이션 합본. 가중치 재산정 필요
+- **옵션 C**: Risk-F(밸류에이션) 신설 — 5리스크 → 6리스크. 가중치/Override/Insight 전반 재설계 (대공사)
+
+## P4-1. 추가 지표 4종
+
+| 지표 | 의미 | 데이터 소스 | 표시 형태 (안) |
+|------|------|-------------|----------------|
+| **KOSPI 전체 PER** ✅구현 | 시장 평균 주가수익비율 — 거품/저평가 판단 | `krx_fetcher.get_kospi_fundamental` → `pykrx.get_index_fundamental_by_date(...,"1001")` (KRX 로그인 필요) | 메트릭 카드 + 시계열 차트 |
+| **KOSPI 전체 PBR** ✅구현 | 시장 평균 주가순자산비율 — 자산 대비 가치 | 동상 | 메트릭 카드 + 시계열 차트 |
+| **S&P 500 PER/PBR** ✅구현 | 미국 시장 밸류에이션 | `us_fetcher.get_sp500_fundamental` → yfinance `SPY` ETF `.info` 근사 (^GSPC엔 PE/PB 없음) | 메트릭 카드 (현재값만 — 시계열 미제공) |
+| **신용잔고 / 미수금** | 개인 레버리지 과열 신호 — 한국 시장 대표 거품 척도 | `pykrx.get_shorting_balance_by_date` 등 (pykrx 가용성 확인 필요. 미보유 시 KOFIA freesis.kofia.or.kr scraping) | 메트릭 카드 + 추세 |
+| **한미 기준금리 차이** | 자본 유출 압력 — 역전(미국>한국) 시 외국인 매도 동조 | ECOS — 이미 둘 다 받음: `EcosClient.get_base_rate` (일별) + `get_us_base_rate` (월별). 단순 뺄셈 | 메트릭 카드 (현재 차이 + 추세 라인) |
+| **VKOSPI** ✅구현(Phase 5) | KOSPI200 옵션 내재변동성 — 시장 fear gauge | `vkospi_fetcher.get_vkospi` → KRX `MDCSTAT01402`/`idxIndCd=300` (KRX 로그인). **P4-1의 `pykrx.get_index_ohlcv_by_date` 코드 1003 추측은 오류 — pykrx 미지원, 위 경로로 대체.** Risk-B 등급 미반영(표시 전용) | Phase 5 변동성 관계에서 사용 |
+
+## P4-2. 데이터 소스 정리
+
+- **ECOS (기존)** — 한미 금리차에 활용. 추가 fetcher 불필요
+- **pykrx (신규)** — KOSPI PER/PBR + VKOSPI + (가능 시) 신용잔고. `requirements.txt`에 `pykrx>=1.0.x` 한 줄. KRX 정보데이터시스템(data.krx.co.kr) 공식 wrapper
+- **KOFIA scraping (조건부)** — pykrx로 신용잔고/미수금 미커버 시 fallback. https://freesis.kofia.or.kr
+
+신규 모듈: `layer1_data/krx_fetcher.py` (pykrx wrapper) — pykrx가 무거우면 함수별 lazy import 권장.
+
+## P4-3. 파이프라인/UI 통합 위치
+
+- **Layer 1**: `krx_fetcher.py` 신규
+- **Layer 2**: 신규 indicator 모듈 불필요 (raw 값을 그대로 표시)
+- **Layer 3~6**: 변경 없음 (등급 룰 미반영)
+- **pipeline/orchestrator.py**: STEP 1 끝부분에 보조 지표 수집 추가, `result["market_context"]` dict로 묶어 반환
+- **layer7_visualization**: 신규 차트 함수 (PER/PBR 추세, VKOSPI 등). 기존 `make_trend` 재사용도 가능
+- **app/streamlit_app.py**: `render_market_dashboard()` 안 또는 별도 expander로 "마켓 컨텍스트" 섹션 추가 (KOSPI 전용)
+
+## P4-4. 단계 분할
+
+| Phase | 작업 | 의존성 | 예상 사이즈 |
+|-------|------|--------|-------------|
+| **A** | 한미 금리차 (ECOS 활용 — 데이터 다 있음) | 없음 | 30분 |
+| **B** | pykrx 도입 → PER/PBR + VKOSPI fetcher | requirements 수정 + 신규 모듈 | 1~2시간 |
+| **C** | 신용잔고/미수금 (pykrx 가용성에 따라 KOFIA fallback) | B 완료 후 | 30분~1시간 |
+| **D** | streamlit "마켓 컨텍스트" 섹션 — 4종 메트릭 + 추세 차트 | A~C 데이터 완성 | 1시간 |
+
+각 Phase별로 검증 + 커밋. 한 번에 묶는 것보다 데이터 소스 검증을 분리해서 진행.
+
+## P4-5. 알려진 미확정 사항
+
+- **pykrx 신용잔고/미수금 함수 정확한 시그니처** — 라이브러리 docs 또는 실제 시도 후 확정
+- **VKOSPI pykrx 지수 코드** — V-KOSPI200 정확한 ticker (`1003` 후보)
+- **표시 단위** — PER/PBR은 절대값, 금리차는 %p, 신용잔고는 조원/억원, VKOSPI는 지수
+- **시계열 라벨** — 한국어/영문 일관성 (다른 차트와 동일하게 한국어 우선)
+- **메트릭 카드 vs 차트** — 현재값만 vs 12개월 추세까지 보여줄지 선택
+
+---
+
+# Phase 5 — 변동성 리스크 프레임워크 (코스피 × S&P 500)
+
+> **버전**: v2.0
+> **기준**: `volatility_risk_v2_kospi_sp500.pdf` (6계층 변동성 리스크 체계, 코스피×S&P500 통합판)
+> **상태**: **구현 완료 (2026-05-24)**. 표시 전용 라이브. 데이터/지표/파이프라인/시각화/UI 전 계층 + 헤드리스 검증 완료.
+> **범위**: VIX·V-KOSPI 양 시장 변동성을 병렬 분석 + 매 계층 관계지표 + 5분류 통합 레짐. **표시 전용 — Phase 1 통합 점수·5리스크·Override·Alert에 영향 없음.**
+> **진입점**: `pipeline/vol_pipeline.py::run_vol_analysis(kospi_result, us_result)`
+>
+> **구현 파일**: Layer1 `vkospi_fetcher.py`(신규)·`us_fetcher.py`(VVIX/SKEW) / Layer2 `cross_market.py`(신규, RI·레짐·트리거) / `config/thresholds.py`(P5 섹션) / `pipeline/vol_pipeline.py`(신규) / Layer7 `vol_chart.py`(신규) / `app/streamlit_app.py`("KOSPI vs S&P 500 비교" expander 내 통합). orchestrator는 TRG-01 입력용 `foreign`·`series.fx_rate` 노출 추가.
+> **미구현**: CBOE Put/Call(CSV 403 차단)·옵션 서피스 한국(데이터 부재). V-KOSPI는 Risk-B 등급 미반영(의도적, 표시 전용).
+
+---
+
+## P5-0. 설계 원칙 — 옵션 A: 보조 메트릭 (등급 영향 없음)
+
+Phase 2 섹터 / Phase 4와 동일. 기존 5리스크(A~E) 및 통합 점수에 **반영하지 않음**. 독립 파이프라인으로 실행하여 화면에만 표시. 이유:
+- 문서 자체가 **모니터링 프레임워크**(일일·주간·월간 루틴)이지 등급 산정 체계가 아님
+- 1년 백분위 임계값은 데이터 축적이 필요 — 캘리브레이션 전 등급 반영은 노이즈
+- `RiskOutput` 스키마는 `extra="forbid"` — 신규 필드 추가 시 런타임 오류. **절대 건드리지 않음**
+
+**향후 승격 시 검토**(현재 미채택): 옵션 B — 한미 상관 급등을 Risk-C/D 보조 신호로 반영 · 옵션 C — Risk-G(시스템/동조화 리스크) 신설.
+
+## P5-1. 데이터 소스
+
+| 지표 | 소스 | 가용 | 비고 |
+|------|------|:----:|------|
+| VIX | yfinance `^VIX` | ✅ | Phase 3에서 이미 수집 |
+| VVIX | yfinance `^VVIX` | ✅ | **신규** — 1계층 조기경보 (120+) |
+| SKEW | yfinance `^SKEW` | ✅ | **신규** — 꼬리 리스크 (140+) |
+| V-KOSPI 현물 | KRX 정보데이터시스템 `MDCSTAT01402`, `idxIndCd=300` | ✅ | **신규** — pykrx 로그인(`KRX_ID`/`KRX_PW`) 후 `auth._auth_session` 재사용. **P4-1의 pykrx 코드 1003 추측을 대체** |
+| KOSPI / S&P 종가·HV | 기존 orchestrator / us_pipeline `series` | ✅ | 실현변동성·상관·베타 입력 |
+| HY 신용 스프레드 | FRED `BAMLH0A0HYM2` | ✅ | FRED 키 있을 때. 5계층 보조 |
+| 외국인 순매수/순매도 | 기존 (`ka10051`) | ✅ | 5계층 + 핵심 3중신호 |
+| 원/달러 환율 | ECOS (기존 macro_fetcher) | ✅ | 5계층 + 핵심 3중신호 |
+| 옵션 서피스 (한국) | — | ❌ | 유동성 부족 — 문서도 산출 불가 명시 |
+| CBOE Put/Call | CBOE CSV (403 차단) / FRED 없음 | ❌ | 보류 — 핵심 신호엔 불필요 |
+
+> **V-KOSPI fetch 상세**: `POST https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd`, `bld=dbms/MDC/STAT/standard/MDCSTAT01402`, `idxIndCd=300`, `idxCd=1`, `idxCd2=300`, `indTpCd=1`, `strtDd`/`endDd`(YYYYMMDD). 응답 `output[].CLSPRC_IDX`(종가=V-KOSPI 값, 문자열·콤마 포함 → 파싱), `TRD_DD`, O/H/L, `PREVDD_IDX`. 로그인 게이트 뒤 → pykrx 자동 로그인 선행 필수.
+
+## P5-2. 6계층 지표 + 관계지표 (RI-01~RI-05)
+
+| 계층 | 미국 (S&P 500) | 한국 (KOSPI 200) | 관계지표 |
+|------|----------------|------------------|----------|
+| **1 내재변동성** | VIX, VVIX, SKEW | V-KOSPI (단독) | **RI-01** `vix_vkospi_spread` = VIX − V-KOSPI |
+| **2 실현변동성** | S&P HV20 (기존) | KOSPI HV20 (기존) | **RI-02** `hv_ratio` = KOSPI HV20 / S&P HV20 |
+| **3 VRP** | `us_vrp` = VIX − S&P HV20 | `kr_vrp` = V-KOSPI − KOSPI HV20 | **RI-03** `vrp_divergence` = us_vrp − kr_vrp |
+| **4 변동성 서피스** | VVIX·SKEW로 근사 (제한적) | 산출 불가 | **RI-04** US 서피스 스필오버 (정성 — VVIX↑/SKEW↑ → 한국 방어 준비) |
+| **5 보조지표** | HY 스프레드 | 외국인·원달러변동성 | **RI-05** `corr_60d` + `kospi_beta` (한미 60일) |
+| **6 통합 레짐** | — | — | REG-01~05 (P5-4) |
+
+```python
+# RI-01 — VIX − V-KOSPI 스프레드 (line 81~91)
+vix_vkospi_spread = vix - vkospi          # 평소 음수(한국 프리미엄): VIX < V-KOSPI
+
+# RI-02 — HV 비율 (line 115~124). KOSPI가 평소 더 큼 → 정상 1.2~1.5
+hv_ratio = kospi_hv20 / sp_hv20           # sp_hv20 == 0이면 None
+
+# RI-03 — VRP 격차 (line 133, 147~155)
+us_vrp = vix - sp_hv20                     # 미국 평균 +4%p, 양수 85~90%
+kr_vrp = vkospi - kospi_hv20               # 한국 평균 +2~3%p, 노이즈 큼 (보조용)
+vrp_divergence = us_vrp - kr_vrp
+
+# RI-05 — 한미 60일 상관계수 + 베타 (line 126~128, 229~238)
+kospi_ret = log(kospi_close).diff().dropna()
+sp_ret    = log(sp_close).diff().dropna()
+aligned   = concat([kospi_ret, sp_ret]).dropna().tail(60)
+corr_60d    = corr(aligned[kospi], aligned[sp])
+kospi_beta  = Cov(aligned[kospi], aligned[sp]) / Var(aligned[sp])
+
+# RI-05 보조 — 미국 1일 선행 시차 상관 (line 128, 시차가 동시점보다 강함)
+# 7시간 오프셋: KOSPI(t)는 S&P(t-1)에 반응 → S&P 수익률 1일 shift 후 정렬
+lagged_corr_60d = corr(kospi_ret(t), sp_ret(t-1))
+```
+
+> **동시점 vs 시차**: `corr_60d`(동시점)는 문서의 0.3~0.5/0.7 임계값·TRG-03 기준(1차). `lagged_corr_60d`(미국 선행)는 전이 강도 보조 지표 — 문서상 더 강하게 나타남. 베타는 관례상 동시점.
+
+> **주의**: `kr_vrp`는 V-KOSPI 옵션 유동성 부족으로 노이즈가 크고 음수로 자주 전환 (문서 line 140~146). **표시는 하되 "보조 참고용" 라벨**. 1차 지표는 `us_vrp`.
+
+## P5-3. 임계값 (`config/thresholds.py`)
+
+> 절대값과 1년 백분위 병행. 백분위는 데이터 축적 후 활성화 (초기엔 절대값).
+
+| 변수 | 값 | 의미 (문서 근거) |
+|------|-----|------|
+| `VIX_HIGH_ABS` / `VIX_LOW_ABS` | 22 / 15 | VIX 높음/낮음 (line 281~283) |
+| `VKOSPI_HIGH_ABS` / `VKOSPI_LOW_ABS` | 25 / 18 | V-KOSPI 높음/낮음 (line 285~288) |
+| `VIX_PCTL_HIGH` / `VIX_PCTL_LOW` | 70 / 30 | 1년 백분위 기준 (line 281~288) |
+| `VKOSPI_PCTL_HIGH` / `VKOSPI_PCTL_LOW` | 70 / 30 | 동상 |
+| `VVIX_WARNING` | 120 | VVIX 조기경보 (line 69) |
+| `SKEW_TAIL` | 140 | SKEW 꼬리 리스크 (line 70) |
+| `SPREAD_KR_STRESS` | +8 | RI-01 한국 단독 불안 (line 88) |
+| `SPREAD_INVERT` | 0 | RI-01 역전 — 이례적 (line 89) |
+| `HVRATIO_KR_SHOCK` / `HVRATIO_KR_CRISIS` | 1.5 / 2.0 | RI-02 한국 충격/위기 (line 122~123) |
+| `HVRATIO_US_CRISIS` | 1.0 | RI-02 미국발 위기 (line 124) |
+| `VRPDIV_US_WATCH` | +5 | RI-03 미국 경계 강화 (line 154) |
+| `VRPDIV_INVERT` | 0 | RI-03 한국 단독 경계 (line 155) |
+| `CORR_NORMAL_HIGH` / `CORR_SYSTEMIC` | 0.5 / 0.7 | RI-05 경계/위기 동조화 (line 55~57) |
+| `BETA_VULNERABLE` / `BETA_DECOUPLE` | 1.2 / 0.7 | RI-05 취약성 확대/탈동조 (line 236~238) |
+| `HY_SPREAD_WIDEN_BP` | 50 | 1개월 50bp+ 확대 = 스트레스 (line 209~210) |
+| `CORR_WINDOW` / `BETA_WINDOW` | 60 / 60 | 롤링 윈도우 (영업일) |
+| **핵심 신호** `VIX_TRIGGER` / `VKOSPI_SYNC` | 25 / 30 | 동조화 위기 진입 (line 349) |
+| `VIX_NIGHT_SPIKE` | 0.30 | VIX 야간 30%↑ 급등 (line 350) |
+| `FX_TRIGGER` | 1400 | 원/달러 1차 방어선 (line 220, 353) |
+
+## P5-4. 5분류 통합 레짐 (REG-01~REG-05, IF/THEN)
+
+VIX(높음/낮음) × V-KOSPI(높음/낮음) + US Watch 추가 = 5분류 (문서 §06).
+
+```python
+vix_high    = (vix >= VIX_HIGH_ABS)        # 또는 1년 백분위 ≥ VIX_PCTL_HIGH
+vix_low     = (vix <= VIX_LOW_ABS)
+vkospi_high = (vkospi >= VKOSPI_HIGH_ABS)
+vkospi_low  = (vkospi <= VKOSPI_LOW_ABS)
+
+# REG-02 — 동조화 위기 (최우선 — 둘 다 높음)
+IF vix_high AND vkospi_high:
+    regime = "REG-02"   # 동조화 위기 (Synchronized Crisis)
+                        # 대응: 방어 모드, 포지션 축소, 환헤지 강화
+# REG-05 — 미국 경계 (가장 중요한 조기경보 — 미국만 높음)
+ELIF vix_high AND NOT vkospi_high:
+    regime = "REG-05"   # US Watch (1~3거래일 내 한국 전이 가능)
+                        # 대응: 신규 매수 중단, 헤지 사전 구축, 외국인 매도 시작 모니터링
+# REG-03 — 한국 단독 위기 (한국만 높음)
+ELIF vkospi_high AND NOT vix_high:
+    regime = "REG-03"   # Korea-Only Stress
+                        # 대응: 외국인·환율·지정학 점검, 미국 자산 비중 확대 검토
+# REG-04 — 글로벌 회복기 (둘 다 낮음 + V-KOSPI 직전 고점 대비 하락 중)
+ELIF vix_low AND vkospi_low AND vkospi_falling_from_peak:
+    regime = "REG-04"   # Global Recovery (음의 VRP 출현 가능)
+                        # 대응: 점진적 비중 확대, 외국인 순매수 전환 확인
+# REG-01 — 글로벌 안정 (둘 다 낮음, 기본)
+ELSE:
+    regime = "REG-01"   # Global Stable (정상 비중 유지)
+
+# 전형적 전환 사이클: REG-01 → REG-05 → REG-02 → REG-04 → REG-01
+# 최대 알파: REG-01→REG-05, REG-05→REG-02 전환의 사전 포착
+```
+
+> **`vkospi_falling_from_peak`**: 최근 N일 V-KOSPI 고점 대비 하락 추세 (REG-04를 REG-01과 구분). 미확정 — P5-7 참조.
+
+## P5-5. 핵심 신호 (TRG — Action Triggers)
+
+```python
+# TRG-01 — 한국 투자자 단일 핵심 신호 (문서 line 384~388, 가장 강력한 사전경보)
+TRG_01 = (vix > VIX_TRIGGER) AND (fx_vol_spike) AND (foreign_net_sell_5d)
+         # VIX>25 + 원/달러 변동성 급등 + 외국인 5거래일 연속 순매도
+
+# TRG-02 — 동조화 위기 진입 (line 349)
+TRG_02 = (vix > VIX_TRIGGER) AND (vkospi > VKOSPI_SYNC)
+
+# TRG-03 — 시스템 리스크 (line 351)
+TRG_03 = (corr_60d > CORR_SYSTEMIC)
+
+# TRG-04 — VVIX/SKEW 조기경보 (미국 단독, V-KOSPI 불필요)
+TRG_04 = (vvix > VVIX_WARNING) AND (vix < VIX_LOW_ABS)   # "조용한 경고"
+```
+
+## P5-6. 출력 스키마 (display-only, Phase 1 RiskOutput과 별도)
+
+```json
+{
+  "regime":       "REG-05",
+  "regime_label": "미국 경계 (US Watch)",
+  "us":  { "vix": 18.06, "vvix": 94.61, "skew": 135.50, "us_vrp": 7.01 },
+  "kr":  { "vkospi": 66.97, "kospi_hv20": 28.3, "kr_vrp": 38.67 },
+  "relationship": {
+    "vix_vkospi_spread": -48.91,
+    "hv_ratio":          1.34,
+    "vrp_divergence":    -31.66,
+    "corr_60d":          0.42,
+    "kospi_beta":        0.91
+  },
+  "triggers": { "TRG-01": false, "TRG-02": false, "TRG-03": false, "TRG-04": false },
+  "data_available": { "vkospi": true, "vvix": true, "hy_spread": true }
+}
+```
+
+> `data_available`로 부분 데이터 결손(V-KOSPI 로그인 실패, FRED 키 없음 등)을 graceful 처리 — 섹터 `data_available` 패턴과 동일.
+
+## P5-7. 파이프라인 / UI 통합 위치
+
+- **Layer 1**: `vkospi_fetcher.py` 신규 (KRX `MDCSTAT01402`) · `us_fetcher.py` 확장 (VVIX·SKEW) · `fred_fetcher.py`에 HY 스프레드 추가
+- **Layer 2**: `cross_market.py` 신규 — RI-01~RI-05 계산 (스프레드·HV비율·VRP·상관·베타)
+- **Layer 3~6**: **변경 없음** (등급 룰 미반영)
+- **pipeline**: `vol_pipeline.py::run_vol_analysis(kospi_result, us_result)` — Phase 1·3 result 두 개 입력, 독립 실행 (sector_pipeline 패턴)
+- **Layer 7**: 신규 차트 — 5분류 레짐 매트릭스(2×2+1), VIX−V-KOSPI 스프레드 추이, 한미 60일 상관 시계열, VRP 격차 게이지
+- **app**: streamlit "변동성 관계" 탭 (KOSPI/S&P 둘 다 필요 → 양 시장 스냅샷 선행)
+
+## P5-8. 알려진 미확정 / 제한
+
+| 항목 | 내용 | 비고 |
+|------|------|------|
+| `vkospi_falling_from_peak` 정의 | REG-04 판별용 — 고점 대비 하락 % / 윈도우 미확정 | 구현 시 확정 |
+| `fx_vol_spike` 정의 | TRG-01 원달러 변동성 급등 — 임계 기준 미확정 | 일간 변화 표준편차? |
+| 1년 백분위 활성화 시점 | 252일 미만이면 절대값 fallback | 데이터 축적 후 |
+| 한국 VRP 신뢰도 | V-KOSPI 옵션 유동성 부족 — 노이즈·음수 빈번 (문서 명시) | "보조 참고용" 라벨 |
+| 옵션 서피스 (한국) | 산출 불가 — 미국 VVIX·SKEW로 근사만 | 문서도 불가 명시 |
+| CBOE Put/Call | CSV 403 차단 + FRED 시리즈 없음 | 핵심 신호 불필요 → 보류 |
+| KRX 로그인 의존 | V-KOSPI는 `KRX_ID`/`KRX_PW` 필수. 미설정 시 `data_available.vkospi=false` → 한국측 지표 None | graceful degradation |
+| 포트폴리오 상관 (구 Phase 5) | 섹터간/종목간/자산군간 상관 매트릭스 — 본 프레임워크의 시장간 상관(RI-05)이 1차 버전. 섹터·종목 확장은 후속 | 별도 스코프로 보존 |
+
+---
+
+# UI 구조 — 탭 기반 재구성 (지향)
+
+> **상태**: 설계 지침. 현재는 시장 선택 라디오(KOSPI/S&P) + 세로 스크롤 단일 페이지.
+> **목표**: 상단 **탭(`st.tabs`)** 으로 영역을 분리해 한 화면에 한 주제만 보이게 한다.
+
+## 탭 구성 (안)
+
+| 탭 | 내용 | 데이터 |
+|----|------|--------|
+| **KOSPI Risk** | KOSPI 통합 리스크 — 통합 점수 게이지, 5리스크 등급, 리스크 추이(Price/HV20/MDD), 섹터 분석, KOSPI PER/PBR | `run_snapshot()` |
+| **S&P 500 Risk** | S&P 통합 리스크 — 동일 구조 (섹터 제외), S&P PER/PBR | `run_us_snapshot()` |
+| **자산배분 추천** | 전략 레벨 + 자산배분(주식/채권/현금) + 인사이트. 선택 시장 기준 또는 양 시장 병치 | 각 result `strategy`/`insights` |
+| **변동성 관계** | Phase 5 — 5분류 레짐 매트릭스, RI-01~05, VRP(내재/외재 해설), GARCH 변동성 추이, VIX−V-KOSPI 스프레드 | `run_vol_analysis()` |
+| **시장 비교** | KOSPI vs S&P 통합 점수·리스크 레이더·등급 테이블 | 양쪽 result |
+
+## 원칙
+
+- 시장 라디오 대신 **KOSPI Risk / S&P 500 Risk를 별도 탭**으로 — 두 시장을 오가지 않고 각각 전용 화면.
+- **자산배분 추천을 독립 탭**으로 승격 — 현재는 각 시장 대시보드 본문에 묻혀있음. 전략/배분/인사이트를 한 곳에 모아 "그래서 뭘 사야 하나"에 집중.
+- **변동성 관계·시장 비교는 양쪽 데이터 로드**가 필요하므로 탭 진입 시 lazy 로드 (현재 expander 패턴 유지 가능).
+- 캐싱(`@st.cache_data(ttl=3600)`)은 탭 전환 시에도 재호출 없이 재사용.
+
+## 미확정
+
+- 자산배분 탭이 **선택 시장 1개**를 보여줄지 **KOSPI·S&P 병치**할지.
+- 탭 전환 시 KOSPI 스냅샷(키움 30~60초)을 언제 로드할지 — 첫 진입 시 vs 앱 시작 시 프리로드.
+- 모바일/좁은 화면에서 탭 5개 가로 배치 가독성.
+
+---
+
+# 알려진 한계 (Known Limitations)
+
+> 현재 시스템이 명시적으로 보유하지 않은 항목. 향후 보완 대상.
+
+- **백테스팅 부재** — 통합 점수·전략 레벨·Override·Alert 룰의 과거 시점 재현 및 성과 검증 미구현. 룰 변경이 historical PnL/MDD/적중률에 미치는 영향을 정량 비교할 수단 없음.
+- **Threshold 임계값 근거 부재** — `config/thresholds.py`의 등급 경계값 (HV20, MDD, VaR, 외국인 매도, 금리·CPI 등) 이 과거 분포 분석·분위수·통계 검정에 기반하지 않음. 현재는 도메인 직관/기획서 기준값으로, 데이터 기반 캘리브레이션 필요.
+- **머신러닝/통계 모델 부재** — 모든 등급 산정이 결정적 룰 (deterministic if/then) 기반. 회귀·분류·시계열 모델 (예: GARCH, HMM, regime detection, gradient boosting 등) 미사용. Risk-D Monte Carlo는 시뮬레이션이지 학습 모델 아님.
 
 ---
 

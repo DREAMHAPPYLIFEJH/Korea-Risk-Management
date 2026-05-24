@@ -13,15 +13,22 @@ def make_trend(
     mdd60: pd.Series,
     ma20: pd.Series | None = None,
     ma60: pd.Series | None = None,
+    mdd_label: str = "MDD_60 MC p50 (%)",
+    mdd_thresholds: tuple[tuple[float, str, str], ...] = (
+        (-4, "Medium", "dot"), (-7, "High", "dash"), (-10, "Critical", "solid"),
+    ),
+    price_label: str = "KOSPI 종가",
 ) -> go.Figure:
-    """3-pane 시계열: KOSPI close / HV20 / MDD_60.
+    """3-pane 시계열: price / HV20 / MDD.
 
-    상단 차트에 MA20/60 오버레이 가능.
+    mdd60 인자는 MC p50 60일 MDD 시계열을 기본으로 받음 (v6.1).
+    mdd_label / mdd_thresholds 인자로 legacy 시각화도 가능.
+    price_label로 시장별 종가 라벨 변경 가능 (KOSPI / S&P 500 등).
     """
     fig = make_subplots(
         rows=3, cols=1,
         shared_xaxes=True,
-        subplot_titles=("KOSPI 종가", "HV20 (연율 %)", "MDD_60 (%)"),
+        subplot_titles=(price_label, "HV20 (연율 %)", mdd_label),
         vertical_spacing=0.07,
         row_heights=[0.45, 0.275, 0.275],
     )
@@ -52,10 +59,10 @@ def make_trend(
                       row=2, col=1)
 
     fig.add_trace(go.Scatter(
-        x=mdd60.index, y=mdd60.values, name="MDD60",
+        x=mdd60.index, y=mdd60.values, name="MDD",
         line=dict(color="#E74C3C", width=1.5), showlegend=False,
     ), row=3, col=1)
-    for thresh, label, dash in [(-5, "Medium", "dot"), (-10, "High", "dash"), (-20, "Critical", "solid")]:
+    for thresh, label, dash in mdd_thresholds:
         fig.add_hline(y=thresh, line=dict(color="gray", width=0.5, dash=dash),
                       annotation_text=label, annotation_position="right",
                       row=3, col=1)

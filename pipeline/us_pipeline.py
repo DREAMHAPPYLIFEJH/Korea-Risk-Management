@@ -32,6 +32,7 @@ from layer2_indicator import volatility as v_ind
 from layer2_indicator import liquidity as l_ind
 from layer2_indicator import downside as d_ind
 from layer2_indicator import derived as derived_ind
+from layer2_indicator.monte_carlo import simulate_paths, mc_mdd_p50_series
 
 # Layer 3 — A~D 재사용, E 신규
 from layer3_risk import market as risk_market
@@ -120,6 +121,14 @@ def run_us_snapshot(
     var95_s  = d_ind.var_95(close, 252)
     cvar95_s = d_ind.cvar_95(close, 252)
 
+    # MC forward-looking 메트릭 — Risk-D 등급 산정 입력 (orchestrator.py와 동일)
+    paths_60  = simulate_paths(close, horizon=60)
+    paths_252 = simulate_paths(close, horizon=252)
+    mdd_60_mc_dict  = d_ind.mc_mdd_percentiles(paths_60)
+    mdd_252_mc_dict = d_ind.mc_mdd_percentiles(paths_252)
+    var_cvar_mc     = d_ind.mc_var_cvar_1d(paths_60)
+    mdd60_mc_p50_s  = mc_mdd_p50_series(close, horizon=60, n_paths=2_000)
+
     last      = sp500.index[-1]
     timestamp = last.strftime("%Y-%m-%d")
 
@@ -159,20 +168,24 @@ def run_us_snapshot(
         if len(fed_aligned) >= 22:
             fed_delta = float((fed_today or 0) - fed_aligned.iloc[-22])
 
-    cpi_today: float | None = None
+    # CPI 월별 절대 지수(CPIAUCSL) → YoY % 변환. risk_us_macro의 CPI_YOY_* 임계값은 % 단위.
+    cpi_yoy: float | None = None
     cpi_delta: float | None = None
-    if cpi_raw is not None and not cpi_raw.empty:
-        cpi_aligned = align_to_business_days(cpi_raw, start_str, end_str)
-        cpi_today   = _at(cpi_aligned, 0.0)
-        if len(cpi_aligned) >= 2:
-            cpi_delta = float((cpi_today or 0) - cpi_aligned.iloc[-2])
+    if cpi_raw is not None and len(cpi_raw) >= 13:
+        cpi_yoy_series = ((cpi_raw / cpi_raw.shift(12) - 1.0) * 100.0).dropna()
+        if not cpi_yoy_series.empty:
+            cpi_yoy = float(cpi_yoy_series.iloc[-1])
+            if len(cpi_yoy_series) >= 2:
+                cpi_delta = float(cpi_yoy_series.iloc[-1] - cpi_yoy_series.iloc[-2])
 
+    # M2 월별 절대 통화량(M2SL) → YoY 성장률 % → 전월 대비 %p 차이로 contraction 판정
     m2_contraction_v = False
-    if m2_raw is not None and not m2_raw.empty and len(m2_raw) >= 2:
-        m2_aligned     = align_to_business_days(m2_raw, start_str, end_str)
-        m2_growth_now  = _at(m2_aligned, 0.0)
-        m2_growth_prev = float(m2_aligned.iloc[-2]) if len(m2_aligned) >= 2 else m2_growth_now
-        m2_contraction_v = bool((m2_growth_now or 0) - (m2_growth_prev or 0) <= M2_CONTRACTION_DROP)
+    if m2_raw is not None and len(m2_raw) >= 14:
+        m2_yoy_series = ((m2_raw / m2_raw.shift(12) - 1.0) * 100.0).dropna()
+        if len(m2_yoy_series) >= 2:
+            m2_yoy_now  = float(m2_yoy_series.iloc[-1])
+            m2_yoy_prev = float(m2_yoy_series.iloc[-2])
+            m2_contraction_v = bool((m2_yoy_now - m2_yoy_prev) <= M2_CONTRACTION_DROP)
 
     # MA flags
     ma_bullish_v      = (ma20 or 0) > (ma60 or 0) > (ma120 or 0)
@@ -201,12 +214,16 @@ def run_us_snapshot(
     risk_d = risk_downside.evaluate(
         mdd_60=mdd60, mdd_252=mdd252, var_95=var95, cvar=cvar95,
         mdd_recovery_months=mdd_recovery_v,
+        mdd_60_mc=mdd_60_mc_dict,
+        mdd_252_mc=mdd_252_mc_dict,
+        var_95_mc=var_cvar_mc["var"],
+        cvar_mc=var_cvar_mc["cvar"],
         timestamp=timestamp,
     )
     risk_e = risk_us_macro.evaluate(
         fed_rate=fed_today,
         fed_rate_delta=fed_delta,
-        cpi_yoy=cpi_today,
+        cpi_yoy=cpi_yoy,
         cpi_delta=cpi_delta,
         dxy_level=dxy_today,
         dxy_weekly_change=dxy_weekly_change,
@@ -283,6 +300,7 @@ def run_us_snapshot(
             "ma120":     ma120_s,
             "hv20":      hv20_s,
             "mdd60":     mdd60_s,
+            "mdd60_mc_p50": mdd60_mc_p50_s,
             "var95":     var95_s,
             "vol_ratio": vol_ratio_s,
         },

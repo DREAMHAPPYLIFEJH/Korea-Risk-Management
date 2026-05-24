@@ -22,7 +22,7 @@ def log_returns(close: pd.Series) -> pd.Series:
 
 
 def historical_volatility(close: pd.Series, window: int) -> pd.Series:
-    """역사적 변동성 — 연율화 (%) (Skills.md §6).
+    """역사적 변동성 — 연율화 (%) (Skills.md §6).   
 
     σ_annual = σ(log_returns, window) × √252 × 100.
     출력 단위: % (예: 15.5 = 연 15.5%).

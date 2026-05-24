@@ -67,7 +67,8 @@ def apply_ovr06(risks: dict[str, RiskOutput]) -> bool:
         if "ovr06_single_critical_exception" not in td:
             td.append("ovr06_single_critical_exception")
         return False  # system_critical_escalation = False
-    return True
+    # Critical 등급이 1개라도 있을 때만 시스템 격상 활성
+    return count_critical(risks) >= 1
 
 
 # ── OVR-02: 단일 Critical → ALT-02 강제 ───────────────────
