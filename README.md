@@ -4,7 +4,7 @@
 > 투자 전략과 자산 배분 방향을 자동 제시하는 분석 대시보드.
 
 **기준 스펙**: [`Skills.md`](./Skills.md) v6.1 / [기획서 v2.0](./금융_투자_대시보드_서비스_기획서.md)
-**진행률**: Phase 1 (KOSPI) · Phase 2 (섹터) · Phase 3 (S&P500 통합 분석) · UI 개편 · **Risk-D Monte Carlo 도입** · **시장 선택 통합 대시보드** 완료 · Phase 4 (보조 마켓 컨텍스트) 계획
+**진행률**: Phase 1 (KOSPI) · Phase 2 (섹터) · Phase 3 (S&P500 통합 분석) · UI 개편 · **Risk-D Monte Carlo 도입** · **시장 선택 통합 대시보드** · **Phase 4 (PER/PBR 구현)** · **Phase 5 (한미 변동성 프레임워크 — 표시 전용)** 완료
 
 ---
 
@@ -41,7 +41,7 @@
 | 유형 | 가중치 | 핵심 지표 |
 |------|--------|----------|
 | 시장 (Market) | 30% | MA 배열 / 이격도 / ADX / 연속 하락 |
-| 변동성 (Volatility) | 25% | HV20 / HV60 (KOSPI: VKOSPI 보류 / US: VIX 적용) |
+| 변동성 (Volatility) | 25% | HV20 / HV60 (KOSPI: 등급은 HV20 단독 — V-KOSPI는 Phase 5 표시 전용 / US: VIX 적용) |
 | 매크로 (Macro) | 20% | KOSPI: 환율/금리/CPI/외국인/M2 · US: DXY/연준금리/CPI/M2 |
 | 유동성 (Liquidity) | 15% | 거래량 비율 / 거래대금 / 연속 감소 |
 | 하방 (Downside) | 10% | **Monte Carlo MDD (p50/p5/var_mc)** / VaR / CVaR / 회복 기간 |
@@ -87,6 +87,20 @@
 - **시장 선택 라디오 + 공통 대시보드** — `app/streamlit_app.py` 상단에 `st.radio(["KOSPI", "S&P 500"])` → 공통 함수 `render_market_dashboard()`로 양 시장 동일 레벨 UI 렌더링 (Alert/메트릭/리스크 차트/트렌드/전략/Risk expander 전부 동일)
 - **글로벌 비교 시각화** — KOSPI vs S&P500 게이지·레이더·등급 표 (on-demand expander로 양쪽 캐시 활용)
 
+### Phase 4 — 보조 마켓 컨텍스트 (PER/PBR)
+- **KOSPI PER/PBR** — KRX 정보데이터시스템(`pykrx` 로그인) 시계열 → MDD 차트 아래 듀얼축 추이 차트
+- **S&P 500 PER/PBR** — yfinance `SPY.info`(`^GSPC`는 PE/PB 미제공) 스냅샷 수치
+- **표시 전용** — 통합 점수·5리스크·전략에 영향 없음. 나머지 P4 지표(신용잔고/한미 금리차)는 계획 단계
+
+### Phase 5 — 한미 변동성 리스크 프레임워크 (표시 전용)
+- **V-KOSPI 수집** — KRX `MDCSTAT01402`(로그인 게이트) 직접 수집. Phase 1에서 보류였던 소스 확보
+- **VVIX / SKEW** — yfinance `^VVIX` / `^SKEW`로 미국 꼬리 위험 보조 지표 수집
+- **관계지표 RI-01~05** — VIX−V-KOSPI 스프레드 / HV 비율 / VRP 격차 / 한미 상관·베타 / 미국 선행 시차 상관
+- **5분류 통합 레짐** — REG-01 글로벌 안정 / REG-02 동조화 위기 / REG-03 한국 단독 위기 / REG-04 글로벌 회복 / REG-05 미국 경계(US Watch, 조기경보)
+- **핵심 트리거 TRG-01~04** — 환율 급변·외국인 연속 순매도·동조화 임계·VVIX 경고
+- **GARCH(1,1) 조건부 변동성 추이** — 한미 외재(실현) 변동성 모델링 차트
+- **표시 전용 설계** — `vol_pipeline.run_vol_analysis()`는 sector_pipeline처럼 독립 실행, 통합 점수·Override·Alert 무영향. V-KOSPI/VRP는 **의도적으로 Risk-B 등급에 미반영**
+
 ### UI 개편
 - **시장 선택 라디오** — 헤더 아래 `KOSPI / S&P 500` 토글, 선택값에 따라 공통 함수 `render_market_dashboard()`로 동일 레벨 대시보드 렌더링
 - **메트릭 카드 4개** — 통합 점수 · Phase · Critical 등급 수 · System Esc
@@ -107,6 +121,7 @@
 - 한국은행 ECOS API 키 — [발급](https://ecos.bok.or.kr/api/)
 - 키움증권 REST API 앱키 / 시크릿키 — [발급](https://openapi.kiwoom.com)
 - FRED API 키 (옵션, Phase 3 US 매크로용) — [발급](https://fred.stlouisfed.org/docs/api/api_key.html) (무료)
+- KRX 정보데이터시스템 계정 (옵션, Phase 4/5 — V-KOSPI·시장 PER/PBR용) — [가입](https://data.krx.co.kr) (무료). 미설정 시 해당 지표 graceful degradation
 
 ### 설치
 
@@ -129,6 +144,8 @@ cp .env.example .env
 #   KIWOOM_APPKEY=...
 #   KIWOOM_SECRETKEY=...
 #   FRED_API_KEY=...        # 옵션 (없으면 US 매크로는 DXY 단독 평가)
+#   KRX_ID=...              # 옵션 (Phase 4/5 — V-KOSPI·PER/PBR, pykrx 로그인)
+#   KRX_PW=...              # 옵션
 ```
 
 ### 실행
@@ -146,13 +163,16 @@ from datetime import date
 from pipeline.orchestrator   import run_snapshot          # Phase 1 KOSPI
 from pipeline.sector_pipeline import run_sector_analysis  # Phase 2 섹터
 from pipeline.us_pipeline    import run_us_snapshot       # Phase 3 S&P500
+from pipeline.vol_pipeline   import run_vol_analysis      # Phase 5 한미 변동성
 
 kospi  = run_snapshot(end_date=date(2026, 4, 30), lookback_days=400)
 sectors = run_sector_analysis(kospi)                       # KOSPI 결과 의존
 sp500  = run_us_snapshot(end_date=date(2026, 4, 30))
+vol    = run_vol_analysis(kospi, sp500)                    # 두 결과 의존 (표시 전용)
 
 print(f"KOSPI : {kospi['score']:.2f} → {kospi['score_band']} · {kospi['strategy']['strategy']}")
 print(f"S&P500: {sp500['score']:.2f} → {sp500['score_band']} · {sp500['strategy']['strategy']}")
+print(f"레짐  : {vol['regime_label']}")
 for r in sectors:
     print(f"  {r.sector:8s}: {r.grade_label or 'N/A'}")
 ```
@@ -217,7 +237,8 @@ for r in sectors:
 | `vol`, `val` | 거래량, 거래대금 | 키움 `ka20006` (응답 포함) | 일별 |
 | `fi_net` | 외국인 시장 전체 순매수 | 키움 `ka10051` (inds_cd=`001_AL`) | 일별 |
 | `sector_ohlcv` | 5 섹터 일별 OHLCV (Phase 2) | 키움 `ka20006` (inds_cd `013/021/008/015/009`) | 일별 |
-| `vkospi` | VKOSPI 변동성 지수 | **Phase 1 보류** (외부 소스 미확보) | — |
+| `vkospi` | V-KOSPI 변동성 지수 | KRX `MDCSTAT01402` (`pykrx` 로그인, idxIndCd=`300`) — **Phase 5 표시 전용** (Risk-B 등급 미반영) | 일별 |
+| `per`, `pbr` | KOSPI PER/PBR (Phase 4) | KRX `pykrx.get_index_fundamental_by_date` (지수 `1001`) | 일별 |
 | `fx_rate` | 원/달러 매매기준율 | ECOS `731Y001` / `0000001` | 일별 |
 | `base_rate` | 한국은행 기준금리 | ECOS `722Y001` / `0101000` | 일별 |
 | `cpi_yoy` | CPI 전년 동월 대비 (%) | ECOS `901Y009` / `0` (자체 YoY 계산) | 월별 |
@@ -234,9 +255,12 @@ for r in sectors:
 | `fed_rate` | 연준 정책금리 (옵셔널) | FRED `FEDFUNDS` | 월별 |
 | `us_cpi_yoy` | 미국 CPI YoY (옵셔널) | FRED `CPIAUCSL` (월별 절대 지수 → 12개월 차분으로 YoY %) | 월별 |
 | `us_m2` | 미국 M2 통화량 YoY (옵셔널) | FRED `M2SL` (월별 절대값 → YoY 성장률 → m2_contraction 판정) | 월별 |
+| `vvix`, `skew` | VVIX·SKEW (Phase 5 꼬리 위험) | yfinance `^VVIX` / `^SKEW` | 일별 |
+| `sp500_per/pbr` | S&P 500 PER/PBR (Phase 4) | yfinance `SPY.info` (`^GSPC`는 PE/PB 미제공) — 스냅샷만 | 스냅샷 |
 
 **API 키 관리**: `.env` 파일에 보관 → `.gitignore`로 차단됨.
-**FRED 옵셔널 처리**: 키 미설정 시 fed/cpi/m2 = None → US 매크로는 DXY 단독 평가 (graceful degradation, VKOSPI 보류와 동일 패턴).
+**FRED 옵셔널 처리**: 키 미설정 시 fed/cpi/m2 = None → US 매크로는 DXY 단독 평가 (graceful degradation).
+**KRX 옵셔널 처리**: `KRX_ID`/`KRX_PW` 미설정 시 V-KOSPI·PER/PBR = None → Phase 4 PER/PBR 미표시, Phase 5는 미국 단독 판정으로 대체.
 
 ---
 
@@ -284,6 +308,10 @@ KOSPI 결과(`result["series"]["close"]`)에 의존. 5 섹터마다 `ka20006` �
 
 Layer 2~6 + Rules 전부 재사용. STEP 1 만 `us_fetcher`+`fred_fetcher` 로 교체, Risk-E 만 `us_macro` 로 교체. VIX 를 `risk_volatility.evaluate(vkospi=vix, ...)` 에 직접 전달 (KOSPI 의 `vkospi=None` 보류 분기를 활용).
 
+### Phase 5 — `run_vol_analysis(kospi_result, us_result)`
+
+두 시장 스냅샷을 입력받아 한미 변동성 관계를 산출하는 **독립 표시 전용** 파이프라인 (sector_pipeline 패턴 — 통합 점수·Override·Alert 무영향). 가격·HV20은 두 result에서 추출하고, V-KOSPI(KRX)·VIX·VVIX·SKEW는 본 파이프라인이 직접 수집. RI-01~05 관계지표 → 5분류 레짐 → TRG-01~04 트리거 → GARCH 조건부 변동성 추이를 반환. 지표 계산은 `layer2_indicator/cross_market.py`(순수 함수), 임계값은 `config/thresholds.py` Phase 5 섹션. TRG-01 입력으로 orchestrator가 `result["foreign"]["streak_sell"]`·`result["series"]["fx_rate"]`를 추가 노출 (기존 계산값 노출만, 동작 무변경).
+
 ---
 
 ## 7. 디렉토리 구조
@@ -295,7 +323,7 @@ Korea-Risk-Management/
 ├── .streamlit/config.toml         # 라이트 테마 강제
 ├── CLAUDE.md                      # 협업 행동 지침
 ├── README.md                      # 본 문서
-├── Skills.md                      # 실행 스펙 v6.1 (계약 문서, Phase 2/3/4 포함)
+├── Skills.md                      # 실행 스펙 v6.1 (계약 문서, Phase 2~5 포함)
 ├── 금융_투자_대시보드_서비스_기획서.md  # 기획서 v2.0
 ├── preceed.md                     # 진행 내역 로그
 ├── requirements.txt
@@ -309,8 +337,10 @@ Korea-Risk-Management/
 │   ├── kospi_fetcher.py           # ka20006 + ka10051
 │   ├── macro_fetcher.py           # ECOS 5종
 │   ├── sector_fetcher.py          # Phase 2 — 5 섹터 ka20006
-│   ├── us_fetcher.py              # Phase 3 — yfinance ^GSPC/^VIX/DXY
+│   ├── us_fetcher.py              # Phase 3 — yfinance ^GSPC/^VIX/DXY (+ Phase 5 ^VVIX/^SKEW, P4 SPY 펀더멘털)
 │   ├── fred_fetcher.py            # Phase 3 — FRED 매크로 (옵셔널)
+│   ├── vkospi_fetcher.py          # Phase 5 — KRX V-KOSPI (MDCSTAT01402, pykrx 로그인)
+│   ├── krx_fetcher.py             # Phase 4 — KOSPI PER/PBR (pykrx)
 │   ├── cleaner.py                 # ffill + 3σ + 영업일 정합
 │   └── state.py                   # JSON 영속화 + EOD 갱신
 │
@@ -321,7 +351,8 @@ Korea-Risk-Management/
 │   ├── downside.py                # MDD / VaR / CVaR (legacy) + MC 메트릭 추출
 │   ├── monte_carlo.py             # v6.1 — simulate_paths (bootstrap/student_t/garch)
 │   ├── derived.py                 # fx_change / MA flags / M2 / MDD 회복
-│   └── sector_indicator.py        # Phase 2 — beta / HV / RS / MDD
+│   ├── sector_indicator.py        # Phase 2 — beta / HV / RS / MDD
+│   └── cross_market.py            # Phase 5 — RI-01~05 / 레짐 / 트리거 / GARCH (순수 함수)
 │
 ├── layer3_risk/
 │   ├── schema.py                  # Pydantic RiskOutput / RiskDetails
@@ -348,6 +379,8 @@ Korea-Risk-Management/
 │   ├── allocation.py              # 도넛 + 전략 라벨
 │   ├── sector_chart.py            # Phase 2 — 섹터 등급 표
 │   ├── comparison.py              # Phase 3 — KR vs US 게이지/레이더/표
+│   ├── vol_chart.py               # Phase 5 — 레짐 매트릭스 / 관계 표 / 스프레드·GARCH 추이
+│   ├── fundamental_chart.py       # Phase 4 — PER/PBR 듀얼축 추이
 │   ├── gauge.py                   # Phase 1 legacy (UI 개편으로 미사용)
 │   ├── radar.py                   # Phase 1 legacy (UI 개편으로 미사용)
 │   └── alert_banner.py            # Phase 1 legacy (UI 개편으로 미사용)
@@ -360,7 +393,8 @@ Korea-Risk-Management/
 ├── pipeline/
 │   ├── orchestrator.py            # Phase 1 — STEP 1~9 + STATE
 │   ├── sector_pipeline.py         # Phase 2 — 5 섹터 독립 분석
-│   └── us_pipeline.py             # Phase 3 — S&P500 STEP 1~9
+│   ├── us_pipeline.py             # Phase 3 — S&P500 STEP 1~9
+│   └── vol_pipeline.py            # Phase 5 — 한미 변동성 관계 (독립 표시 전용)
 │
 ├── app/
 │   └── streamlit_app.py           # 대시보드 진입점 (UI 개편 완료)
@@ -442,7 +476,8 @@ Korea-Risk-Management/
 | §15 Validation Checklist | Pydantic 모델로 6+9 필드 강제 |
 | Phase 2 §P2-1~P2-6 (Sector) | `layer3_risk/sector.py` + `pipeline/sector_pipeline.py` |
 | Phase 3 §P3-1~P3-6 (S&P500 통합) | `pipeline/us_pipeline.py` + `layer3_risk/us_macro.py` + `app/streamlit_app.py` (시장 선택 라디오 + `render_market_dashboard`) |
-| Phase 4 §P4-0~P4-5 (보조 마켓 컨텍스트, 계획) | 미구현 — PER/PBR / 신용잔고·미수금 / 한미 금리차 / VKOSPI |
+| Phase 4 §P4-0~P4-5 (보조 마켓 컨텍스트) | PER/PBR 구현 (`krx_fetcher.py` / `us_fetcher.get_sp500_fundamental` + `fundamental_chart.py`) — 신용잔고·한미 금리차는 계획 |
+| Phase 5 §P5-0~P5-8 (변동성 프레임워크, 표시 전용) | `vkospi_fetcher.py` + `cross_market.py` + `vol_pipeline.py` + `vol_chart.py` (RI/REG/TRG ID 추적) |
 
 ---
 
@@ -450,7 +485,7 @@ Korea-Risk-Management/
 
 | 항목 | 영향 | 우선순위 |
 |------|------|---------|
-| **VKOSPI 미수집 (KOSPI)** | Risk-B를 HV20 단독으로 산정 (정확도 일부 손실). US 쪽은 VIX 적용 완료. | 데이터 소스 확보 시 |
+| **V-KOSPI 등급 미반영 (KOSPI)** | 데이터는 KRX로 확보(Phase 5)했으나, **의도적으로** Risk-B 등급에는 미반영 — V-KOSPI/VRP는 Phase 5 표시 전용. 현재 수준에서 연결 시 Risk-B가 Critical로 전환되며 점수/전략/알림에 연쇄. US 쪽은 VIX 적용 완료. | 등급 반영 여부 별도 결정 시 |
 | **FRED 키 미설정** | US 매크로가 DXY 단독 평가 (옵셔널, graceful degradation) | 정밀도 필요 시 |
 | **섹터 등급 보정 임계 (HV30 / MDD-15)** | Korean 섹터 평균 변동성과 가까워 Low/Medium 등급이 잘 안 나옴 | 시장 실측 기반 캘리브레이션 시 |
 | **ka10051 일별 루프 + 429 rate limit** | 30~60초 소요, 일부 일자 skip | 캐싱 레이어 도입 시 해소 |
@@ -460,15 +495,17 @@ Korea-Risk-Management/
 | **MC 임계값 실측 기반 캘리브레이션** | 초기 임계값(p50: -4/-7/-10, p5: -10/-18/-25)은 1차 추정. KOSPI 장기 백테스트로 분위수 분포 검증 필요 | 운영 배포 전 |
 | **멀티 사용자 STATE 격리** | 단일 JSON 파일 (단일 사용자 가정) | 멀티 인스턴스 배포 시 |
 
-### VKOSPI 보류 처리 (Phase 1 KOSPI 전용)
+### V-KOSPI 등급 미반영 처리 (Phase 1 KOSPI 전용 — 의도적 결정)
 
-외부 데이터 소스(키움 / ECOS / FinanceDataReader / yfinance) 모두 VKOSPI 미지원으로
-Phase 1에서는 **Risk-B를 HV20 단독으로 등급 산정**합니다.
+Phase 5에서 KRX `MDCSTAT01402`로 V-KOSPI 데이터 소스를 **확보**했지만, 결정에 따라
+**Risk-B 등급에는 연결하지 않았습니다** — V-KOSPI/VRP는 Phase 5 표시 전용으로만 사용하고,
+Risk-B는 여전히 **HV20 단독으로 등급 산정**합니다.
 
+- `risk_volatility.evaluate(vkospi=None)` 유지 → `vkospi`/`vkospi_grade` 필드는 `null` 직렬화
 - CR-01의 `MAX(hv_grade, vkospi_grade)` 충돌 해소는 사실상 `volatility_grade = hv_grade`로 동작
-- Risk-B JSON 출력에서 `vkospi`, `vkospi_grade` 필드는 `null` 직렬화
-- VKOSPI 데이터 소스 확보 시 fetcher 추가만으로 자동 활성화 (분기 처리 완료)
-- **참고**: Phase 3 US 파이프라인은 VIX 를 `vkospi` 파라미터로 직접 전달 — 동일한 보류 분기가 정상 경로로 동작 중
+- 분기(`if vkospi is not None:`)는 이미 구비 — 등급 반영을 결정하면 값 전달만으로 활성화되나,
+  현재 V-KOSPI 수준에서는 Risk-B가 Critical로 전환되어 점수/전략/알림에 연쇄하므로 **의도 확인 후 연결**
+- **참고**: Phase 3 US 파이프라인은 VIX 를 `vkospi` 파라미터로 직접 전달 — 동일 분기가 정상 경로로 동작 중
 
 ---
 
@@ -523,5 +560,6 @@ Phase 1에서는 **Risk-B를 HV20 단독으로 등급 산정**합니다.
 규칙 ID(CR / OVR / ALT / INS)를 1:1로 매핑하여 구현했습니다. Phase 1 KOSPI 분석을
 출발점으로 Phase 2 섹터 분석, Phase 3 S&P500 통합 대시보드(시장 선택 라디오 + 공통
 렌더 함수)까지 확장하여 시장 확장형 구조를 실증했습니다 — `config/thresholds.py` 교체와
-fetcher 신규만으로 KOSPI ↔ S&P500 동일 구조 적용 가능. Phase 4는 보조 마켓 컨텍스트
-지표(PER/PBR/신용잔고/한미 금리차/VKOSPI) 도입이 계획되어 있습니다 (Skills.md §P4 참조).*
+fetcher 신규만으로 KOSPI ↔ S&P500 동일 구조 적용 가능. Phase 4(KOSPI·S&P PER/PBR)와
+Phase 5(한미 변동성 프레임워크 — V-KOSPI/VVIX/SKEW/VRP/5분류 레짐/GARCH, 표시 전용)까지
+구현 완료했습니다 (Skills.md §P4·§P5 참조).*
