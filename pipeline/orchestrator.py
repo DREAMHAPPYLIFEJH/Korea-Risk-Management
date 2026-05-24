@@ -363,6 +363,11 @@ def run_snapshot(
         "strategy":       strat,
         "insights":       insights,
         "alerts":         active_alerts,
+        # 외국인 수급 (Phase 5 TRG-01 입력 — fi_streak_sell 노출)
+        "foreign": {
+            "streak_sell": fi_streak_sell_v,  # 연속 순매도 거래일 수
+            "net_5d":      fi_5d_cum_v,        # 최근 5일 누적 순매수 (백만원)
+        },
         # 시계열 (시각화용)
         "series": {
             "close":  close,
@@ -372,5 +377,6 @@ def run_snapshot(
             "mdd60_mc_p50": mdd60_mc_p50_s, # MC 기반 forward-looking p50 (UI 기본)
             "var95":  var95_s,
             "vol_ratio": vol_ratio_s,
+            "fx_rate": fx,                  # 원/달러 시계열 (Phase 5 fx_vol_spike 입력)
         },
     }

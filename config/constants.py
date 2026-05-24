@@ -102,14 +102,27 @@ def CLAMP(value, min_val, max_val):
 # yfinance 티커
 US_MARKET_TICKER = "^GSPC"   # S&P500
 US_VIX_TICKER    = "^VIX"    # VIX (VKOSPI 대응)
+US_VVIX_TICKER   = "^VVIX"   # VVIX — VIX의 변동성 (Phase 5, 조기경보)
+US_SKEW_TICKER   = "^SKEW"   # SKEW — 꼬리 리스크 (Phase 5)
 US_DXY_TICKER    = "DX-Y.NYB" # Dollar Index
 
 # FRED 시리즈 ID
 FRED_SERIES = {
-    "fed_rate": "FEDFUNDS",   # 연준 기준금리
-    "cpi":      "CPIAUCSL",   # CPI (전수 지수)
-    "m2":       "M2SL",       # M2 통화량
+    "fed_rate":  "FEDFUNDS",      # 연준 기준금리
+    "cpi":       "CPIAUCSL",      # CPI (전수 지수)
+    "m2":        "M2SL",          # M2 통화량
+    "hy_spread": "BAMLH0A0HYM2",  # 하이일드 회사채 OAS (Phase 5, 5계층 보조)
 }
+
+# ── Phase 5 — V-KOSPI (KRX 정보데이터시스템) ─────────────────
+# 코스피200 변동성지수 현물. KRX MDCSTAT01402 / idxIndCd=300.
+# 파생시장 지수라 pykrx get_index_* 미지원 → KRX 로그인(KRX_ID/KRX_PW) 후 직접 호출.
+KRX_GETJSON_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+VKOSPI_BLD      = "dbms/MDC/STAT/standard/MDCSTAT01402"
+VKOSPI_IDX_CD   = "300"
+
+# KOSPI 지수 코드 (Phase 4 — PER/PBR 펀더멘털 조회)
+KOSPI_INDEX_CODE = "1001"
 
 # ── Monte Carlo 설정 — Risk-D MC 기반 지표 ──────────────────
 

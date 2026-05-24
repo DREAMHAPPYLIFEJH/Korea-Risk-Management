@@ -2665,9 +2665,10 @@ KOSPI에서는 평소 `critical_count >= 1`이라 우연히 가려져 있던 버
 
 ---
 
-# Phase 4 — 보조 마켓 컨텍스트 지표 (계획)
+# Phase 4 — 보조 마켓 컨텍스트 지표 (일부 구현)
 
-> **상태**: 계획만 정리됨. 구현 미시작. 향후 별도 작업으로 진행.
+> **상태**: **PER/PBR 구현 완료 (2026-05-24)** — KOSPI(KRX `MDCSTAT01402` 계열, `krx_fetcher.py`) + S&P 500(SPY ETF 근사, `us_fetcher.get_sp500_fundamental`). VKOSPI는 Phase 5에서 구현(`vkospi_fetcher.py`). 나머지(신용잔고/미수금, 한미 금리차 카드)는 계획 단계. 전부 표시 전용.
+> **표시 위치**: `render_market_dashboard` 리스크 추이(MDD) 아래 — KOSPI는 PER/PBR/배당 메트릭+추이 차트, S&P는 PER/PBR 현재값(SPY 근사, 시계열 미제공).
 
 ## P4-0. 설계 원칙 — 옵션 A: 보조 메트릭 (등급 영향 없음)
 
@@ -2687,11 +2688,12 @@ KOSPI에서는 평소 `critical_count >= 1`이라 우연히 가려져 있던 버
 
 | 지표 | 의미 | 데이터 소스 | 표시 형태 (안) |
 |------|------|-------------|----------------|
-| **KOSPI 전체 PER** | 시장 평균 주가수익비율 — 거품/저평가 판단 | `pykrx.get_market_fundamental_by_date("1001")` (KOSPI 지수 코드) | 메트릭 카드 + 시계열 차트 (12개월 추세) |
-| **KOSPI 전체 PBR** | 시장 평균 주가순자산비율 — 자산 대비 가치 | 동상 | 메트릭 카드 + 시계열 차트 |
+| **KOSPI 전체 PER** ✅구현 | 시장 평균 주가수익비율 — 거품/저평가 판단 | `krx_fetcher.get_kospi_fundamental` → `pykrx.get_index_fundamental_by_date(...,"1001")` (KRX 로그인 필요) | 메트릭 카드 + 시계열 차트 |
+| **KOSPI 전체 PBR** ✅구현 | 시장 평균 주가순자산비율 — 자산 대비 가치 | 동상 | 메트릭 카드 + 시계열 차트 |
+| **S&P 500 PER/PBR** ✅구현 | 미국 시장 밸류에이션 | `us_fetcher.get_sp500_fundamental` → yfinance `SPY` ETF `.info` 근사 (^GSPC엔 PE/PB 없음) | 메트릭 카드 (현재값만 — 시계열 미제공) |
 | **신용잔고 / 미수금** | 개인 레버리지 과열 신호 — 한국 시장 대표 거품 척도 | `pykrx.get_shorting_balance_by_date` 등 (pykrx 가용성 확인 필요. 미보유 시 KOFIA freesis.kofia.or.kr scraping) | 메트릭 카드 + 추세 |
 | **한미 기준금리 차이** | 자본 유출 압력 — 역전(미국>한국) 시 외국인 매도 동조 | ECOS — 이미 둘 다 받음: `EcosClient.get_base_rate` (일별) + `get_us_base_rate` (월별). 단순 뺄셈 | 메트릭 카드 (현재 차이 + 추세 라인) |
-| **VKOSPI** | KOSPI200 옵션 내재변동성 — 시장 fear gauge | `pykrx.get_index_ohlcv_by_date` V-KOSPI200 (yfinance에는 없음 — 확인됨) | 메트릭 카드 + 시계열 차트 (HV20과 병치 가능) |
+| **VKOSPI** ✅구현(Phase 5) | KOSPI200 옵션 내재변동성 — 시장 fear gauge | `vkospi_fetcher.get_vkospi` → KRX `MDCSTAT01402`/`idxIndCd=300` (KRX 로그인). **P4-1의 `pykrx.get_index_ohlcv_by_date` 코드 1003 추측은 오류 — pykrx 미지원, 위 경로로 대체.** Risk-B 등급 미반영(표시 전용) | Phase 5 변동성 관계에서 사용 |
 
 ## P4-2. 데이터 소스 정리
 
@@ -2731,54 +2733,236 @@ KOSPI에서는 평소 `critical_count >= 1`이라 우연히 가려져 있던 버
 
 ---
 
-# Phase 5 — 포트폴리오 상관관계 분석 (계획)
+# Phase 5 — 변동성 리스크 프레임워크 (코스피 × S&P 500)
 
-> **상태**: 아이디어만 정리됨. 구현 미시작. 범위·UI 형태 추후 확정.
+> **버전**: v2.0
+> **기준**: `volatility_risk_v2_kospi_sp500.pdf` (6계층 변동성 리스크 체계, 코스피×S&P500 통합판)
+> **상태**: **구현 완료 (2026-05-24)**. 표시 전용 라이브. 데이터/지표/파이프라인/시각화/UI 전 계층 + 헤드리스 검증 완료.
+> **범위**: VIX·V-KOSPI 양 시장 변동성을 병렬 분석 + 매 계층 관계지표 + 5분류 통합 레짐. **표시 전용 — Phase 1 통합 점수·5리스크·Override·Alert에 영향 없음.**
+> **진입점**: `pipeline/vol_pipeline.py::run_vol_analysis(kospi_result, us_result)`
+>
+> **구현 파일**: Layer1 `vkospi_fetcher.py`(신규)·`us_fetcher.py`(VVIX/SKEW) / Layer2 `cross_market.py`(신규, RI·레짐·트리거) / `config/thresholds.py`(P5 섹션) / `pipeline/vol_pipeline.py`(신규) / Layer7 `vol_chart.py`(신규) / `app/streamlit_app.py`("KOSPI vs S&P 500 비교" expander 내 통합). orchestrator는 TRG-01 입력용 `foreign`·`series.fx_rate` 노출 추가.
+> **미구현**: CBOE Put/Call(CSV 403 차단)·옵션 서피스 한국(데이터 부재). V-KOSPI는 Risk-B 등급 미반영(의도적, 표시 전용).
 
-## P5-0. 목적
+---
 
-자산/종목/섹터/시장 간의 **수익률 상관관계**를 시각화하여:
-- **분산투자 효과 확인** — 보유 자산들이 실제로 비상관인지 확인
-- **위기 시 디커플링 깨짐 감지** — 평소 비상관이던 자산이 위기 때 동조화(상관 → 1)되는 현상 조기 포착
-- **포트폴리오 집중 리스크 정량화** — 평균 상관계수가 높을수록 분산 효과 축소
+## P5-0. 설계 원칙 — 옵션 A: 보조 메트릭 (등급 영향 없음)
 
-## P5-1. 분석 범위 후보 (택일 또는 다중)
+Phase 2 섹터 / Phase 4와 동일. 기존 5리스크(A~E) 및 통합 점수에 **반영하지 않음**. 독립 파이프라인으로 실행하여 화면에만 표시. 이유:
+- 문서 자체가 **모니터링 프레임워크**(일일·주간·월간 루틴)이지 등급 산정 체계가 아님
+- 1년 백분위 임계값은 데이터 축적이 필요 — 캘리브레이션 전 등급 반영은 노이즈
+- `RiskOutput` 스키마는 `extra="forbid"` — 신규 필드 추가 시 런타임 오류. **절대 건드리지 않음**
 
-| 범위 | 설명 | 데이터 소스 |
-|------|------|-------------|
-| **시장 간 상관** | KOSPI ↔ S&P 500 ↔ 채권 ↔ 원자재 등 | 이미 보유 (yfinance / 키움) + FRED 채권/원자재 추가 가능 |
-| **섹터 간 상관** | Phase 2 5섹터 간 상관 매트릭스 | 이미 보유 (`sector_fetcher`) |
-| **사용자 보유 종목 간 상관** | 사용자가 입력한 포트폴리오 종목들의 상관 | 키움 종목별 OHLCV 신규 fetcher 필요 |
-| **자산군 간 상관** | 주식/채권/현금/원자재/리츠 | 각 자산군 대표 ETF 또는 지수 |
+**향후 승격 시 검토**(현재 미채택): 옵션 B — 한미 상관 급등을 Risk-C/D 보조 신호로 반영 · 옵션 C — Risk-G(시스템/동조화 리스크) 신설.
 
-## P5-2. 핵심 지표
+## P5-1. 데이터 소스
 
-- **피어슨 상관계수** (일별 로그수익률 기준, 60일/252일 롤링)
-- **롤링 상관계수 시계열** — 시간에 따른 상관 변화 추적 (위기 동조화 감지)
-- **평균 상관계수** — 매트릭스 평균 → 포트폴리오 분산 효과 척도
-- **상관계수 변화율** — 직전 N일 대비 변화량 (급변 감지)
+| 지표 | 소스 | 가용 | 비고 |
+|------|------|:----:|------|
+| VIX | yfinance `^VIX` | ✅ | Phase 3에서 이미 수집 |
+| VVIX | yfinance `^VVIX` | ✅ | **신규** — 1계층 조기경보 (120+) |
+| SKEW | yfinance `^SKEW` | ✅ | **신규** — 꼬리 리스크 (140+) |
+| V-KOSPI 현물 | KRX 정보데이터시스템 `MDCSTAT01402`, `idxIndCd=300` | ✅ | **신규** — pykrx 로그인(`KRX_ID`/`KRX_PW`) 후 `auth._auth_session` 재사용. **P4-1의 pykrx 코드 1003 추측을 대체** |
+| KOSPI / S&P 종가·HV | 기존 orchestrator / us_pipeline `series` | ✅ | 실현변동성·상관·베타 입력 |
+| HY 신용 스프레드 | FRED `BAMLH0A0HYM2` | ✅ | FRED 키 있을 때. 5계층 보조 |
+| 외국인 순매수/순매도 | 기존 (`ka10051`) | ✅ | 5계층 + 핵심 3중신호 |
+| 원/달러 환율 | ECOS (기존 macro_fetcher) | ✅ | 5계층 + 핵심 3중신호 |
+| 옵션 서피스 (한국) | — | ❌ | 유동성 부족 — 문서도 산출 불가 명시 |
+| CBOE Put/Call | CBOE CSV (403 차단) / FRED 없음 | ❌ | 보류 — 핵심 신호엔 불필요 |
 
-## P5-3. 표시 형태 (안)
+> **V-KOSPI fetch 상세**: `POST https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd`, `bld=dbms/MDC/STAT/standard/MDCSTAT01402`, `idxIndCd=300`, `idxCd=1`, `idxCd2=300`, `indTpCd=1`, `strtDd`/`endDd`(YYYYMMDD). 응답 `output[].CLSPRC_IDX`(종가=V-KOSPI 값, 문자열·콤마 포함 → 파싱), `TRD_DD`, O/H/L, `PREVDD_IDX`. 로그인 게이트 뒤 → pykrx 자동 로그인 선행 필수.
 
-- **상관 매트릭스 히트맵** — 색상으로 -1 ~ +1 그라데이션
-- **롤링 상관 시계열 라인 차트** — 주요 쌍별 (예: KOSPI-S&P, KOSPI-USD/KRW)
-- **분산효과 게이지** — 평균 상관계수를 0~1로 매핑 (낮을수록 분산 효과 큼)
-- **위기 동조화 알림** — 60일 롤링 상관이 임계치 이상 급등하면 별도 신호
+## P5-2. 6계층 지표 + 관계지표 (RI-01~RI-05)
 
-## P5-4. 등급 영향 여부 (옵션 A vs B vs C)
+| 계층 | 미국 (S&P 500) | 한국 (KOSPI 200) | 관계지표 |
+|------|----------------|------------------|----------|
+| **1 내재변동성** | VIX, VVIX, SKEW | V-KOSPI (단독) | **RI-01** `vix_vkospi_spread` = VIX − V-KOSPI |
+| **2 실현변동성** | S&P HV20 (기존) | KOSPI HV20 (기존) | **RI-02** `hv_ratio` = KOSPI HV20 / S&P HV20 |
+| **3 VRP** | `us_vrp` = VIX − S&P HV20 | `kr_vrp` = V-KOSPI − KOSPI HV20 | **RI-03** `vrp_divergence` = us_vrp − kr_vrp |
+| **4 변동성 서피스** | VVIX·SKEW로 근사 (제한적) | 산출 불가 | **RI-04** US 서피스 스필오버 (정성 — VVIX↑/SKEW↑ → 한국 방어 준비) |
+| **5 보조지표** | HY 스프레드 | 외국인·원달러변동성 | **RI-05** `corr_60d` + `kospi_beta` (한미 60일) |
+| **6 통합 레짐** | — | — | REG-01~05 (P5-4) |
 
-Phase 4와 동일한 설계 원칙 검토 필요:
-- **옵션 A (보조 메트릭)** — 등급 영향 없이 화면에만 표시 (안전, 추천)
-- **옵션 B** — 평균 상관 급등을 Risk-C(유동성) 또는 Risk-D(하방)에 추가 신호로 반영
-- **옵션 C** — 신규 Risk-G(시스템 리스크) 신설
+```python
+# RI-01 — VIX − V-KOSPI 스프레드 (line 81~91)
+vix_vkospi_spread = vix - vkospi          # 평소 음수(한국 프리미엄): VIX < V-KOSPI
 
-## P5-5. 알려진 미확정 사항
+# RI-02 — HV 비율 (line 115~124). KOSPI가 평소 더 큼 → 정상 1.2~1.5
+hv_ratio = kospi_hv20 / sp_hv20           # sp_hv20 == 0이면 None
 
-- **범위 우선순위** — 시장 간 / 섹터 간 / 보유 종목 간 / 자산군 간 중 어느 것부터?
-- **사용자 포트폴리오 입력 방식** — JSON 파일? Streamlit 입력 폼? 종목 코드 + 비중?
-- **롤링 윈도우** — 60일(단기 변화 민감) vs 252일(안정적, 1년 기준) vs 둘 다 병치
-- **위기 동조화 임계값** — 평균 상관 > N일 때 알림? 백테스트로 결정 필요
-- **계산 비용** — 보유 종목 수 × 종목 수의 매트릭스 — 종목 많아지면 캐싱 전략 필요
+# RI-03 — VRP 격차 (line 133, 147~155)
+us_vrp = vix - sp_hv20                     # 미국 평균 +4%p, 양수 85~90%
+kr_vrp = vkospi - kospi_hv20               # 한국 평균 +2~3%p, 노이즈 큼 (보조용)
+vrp_divergence = us_vrp - kr_vrp
+
+# RI-05 — 한미 60일 상관계수 + 베타 (line 126~128, 229~238)
+kospi_ret = log(kospi_close).diff().dropna()
+sp_ret    = log(sp_close).diff().dropna()
+aligned   = concat([kospi_ret, sp_ret]).dropna().tail(60)
+corr_60d    = corr(aligned[kospi], aligned[sp])
+kospi_beta  = Cov(aligned[kospi], aligned[sp]) / Var(aligned[sp])
+
+# RI-05 보조 — 미국 1일 선행 시차 상관 (line 128, 시차가 동시점보다 강함)
+# 7시간 오프셋: KOSPI(t)는 S&P(t-1)에 반응 → S&P 수익률 1일 shift 후 정렬
+lagged_corr_60d = corr(kospi_ret(t), sp_ret(t-1))
+```
+
+> **동시점 vs 시차**: `corr_60d`(동시점)는 문서의 0.3~0.5/0.7 임계값·TRG-03 기준(1차). `lagged_corr_60d`(미국 선행)는 전이 강도 보조 지표 — 문서상 더 강하게 나타남. 베타는 관례상 동시점.
+
+> **주의**: `kr_vrp`는 V-KOSPI 옵션 유동성 부족으로 노이즈가 크고 음수로 자주 전환 (문서 line 140~146). **표시는 하되 "보조 참고용" 라벨**. 1차 지표는 `us_vrp`.
+
+## P5-3. 임계값 (`config/thresholds.py`)
+
+> 절대값과 1년 백분위 병행. 백분위는 데이터 축적 후 활성화 (초기엔 절대값).
+
+| 변수 | 값 | 의미 (문서 근거) |
+|------|-----|------|
+| `VIX_HIGH_ABS` / `VIX_LOW_ABS` | 22 / 15 | VIX 높음/낮음 (line 281~283) |
+| `VKOSPI_HIGH_ABS` / `VKOSPI_LOW_ABS` | 25 / 18 | V-KOSPI 높음/낮음 (line 285~288) |
+| `VIX_PCTL_HIGH` / `VIX_PCTL_LOW` | 70 / 30 | 1년 백분위 기준 (line 281~288) |
+| `VKOSPI_PCTL_HIGH` / `VKOSPI_PCTL_LOW` | 70 / 30 | 동상 |
+| `VVIX_WARNING` | 120 | VVIX 조기경보 (line 69) |
+| `SKEW_TAIL` | 140 | SKEW 꼬리 리스크 (line 70) |
+| `SPREAD_KR_STRESS` | +8 | RI-01 한국 단독 불안 (line 88) |
+| `SPREAD_INVERT` | 0 | RI-01 역전 — 이례적 (line 89) |
+| `HVRATIO_KR_SHOCK` / `HVRATIO_KR_CRISIS` | 1.5 / 2.0 | RI-02 한국 충격/위기 (line 122~123) |
+| `HVRATIO_US_CRISIS` | 1.0 | RI-02 미국발 위기 (line 124) |
+| `VRPDIV_US_WATCH` | +5 | RI-03 미국 경계 강화 (line 154) |
+| `VRPDIV_INVERT` | 0 | RI-03 한국 단독 경계 (line 155) |
+| `CORR_NORMAL_HIGH` / `CORR_SYSTEMIC` | 0.5 / 0.7 | RI-05 경계/위기 동조화 (line 55~57) |
+| `BETA_VULNERABLE` / `BETA_DECOUPLE` | 1.2 / 0.7 | RI-05 취약성 확대/탈동조 (line 236~238) |
+| `HY_SPREAD_WIDEN_BP` | 50 | 1개월 50bp+ 확대 = 스트레스 (line 209~210) |
+| `CORR_WINDOW` / `BETA_WINDOW` | 60 / 60 | 롤링 윈도우 (영업일) |
+| **핵심 신호** `VIX_TRIGGER` / `VKOSPI_SYNC` | 25 / 30 | 동조화 위기 진입 (line 349) |
+| `VIX_NIGHT_SPIKE` | 0.30 | VIX 야간 30%↑ 급등 (line 350) |
+| `FX_TRIGGER` | 1400 | 원/달러 1차 방어선 (line 220, 353) |
+
+## P5-4. 5분류 통합 레짐 (REG-01~REG-05, IF/THEN)
+
+VIX(높음/낮음) × V-KOSPI(높음/낮음) + US Watch 추가 = 5분류 (문서 §06).
+
+```python
+vix_high    = (vix >= VIX_HIGH_ABS)        # 또는 1년 백분위 ≥ VIX_PCTL_HIGH
+vix_low     = (vix <= VIX_LOW_ABS)
+vkospi_high = (vkospi >= VKOSPI_HIGH_ABS)
+vkospi_low  = (vkospi <= VKOSPI_LOW_ABS)
+
+# REG-02 — 동조화 위기 (최우선 — 둘 다 높음)
+IF vix_high AND vkospi_high:
+    regime = "REG-02"   # 동조화 위기 (Synchronized Crisis)
+                        # 대응: 방어 모드, 포지션 축소, 환헤지 강화
+# REG-05 — 미국 경계 (가장 중요한 조기경보 — 미국만 높음)
+ELIF vix_high AND NOT vkospi_high:
+    regime = "REG-05"   # US Watch (1~3거래일 내 한국 전이 가능)
+                        # 대응: 신규 매수 중단, 헤지 사전 구축, 외국인 매도 시작 모니터링
+# REG-03 — 한국 단독 위기 (한국만 높음)
+ELIF vkospi_high AND NOT vix_high:
+    regime = "REG-03"   # Korea-Only Stress
+                        # 대응: 외국인·환율·지정학 점검, 미국 자산 비중 확대 검토
+# REG-04 — 글로벌 회복기 (둘 다 낮음 + V-KOSPI 직전 고점 대비 하락 중)
+ELIF vix_low AND vkospi_low AND vkospi_falling_from_peak:
+    regime = "REG-04"   # Global Recovery (음의 VRP 출현 가능)
+                        # 대응: 점진적 비중 확대, 외국인 순매수 전환 확인
+# REG-01 — 글로벌 안정 (둘 다 낮음, 기본)
+ELSE:
+    regime = "REG-01"   # Global Stable (정상 비중 유지)
+
+# 전형적 전환 사이클: REG-01 → REG-05 → REG-02 → REG-04 → REG-01
+# 최대 알파: REG-01→REG-05, REG-05→REG-02 전환의 사전 포착
+```
+
+> **`vkospi_falling_from_peak`**: 최근 N일 V-KOSPI 고점 대비 하락 추세 (REG-04를 REG-01과 구분). 미확정 — P5-7 참조.
+
+## P5-5. 핵심 신호 (TRG — Action Triggers)
+
+```python
+# TRG-01 — 한국 투자자 단일 핵심 신호 (문서 line 384~388, 가장 강력한 사전경보)
+TRG_01 = (vix > VIX_TRIGGER) AND (fx_vol_spike) AND (foreign_net_sell_5d)
+         # VIX>25 + 원/달러 변동성 급등 + 외국인 5거래일 연속 순매도
+
+# TRG-02 — 동조화 위기 진입 (line 349)
+TRG_02 = (vix > VIX_TRIGGER) AND (vkospi > VKOSPI_SYNC)
+
+# TRG-03 — 시스템 리스크 (line 351)
+TRG_03 = (corr_60d > CORR_SYSTEMIC)
+
+# TRG-04 — VVIX/SKEW 조기경보 (미국 단독, V-KOSPI 불필요)
+TRG_04 = (vvix > VVIX_WARNING) AND (vix < VIX_LOW_ABS)   # "조용한 경고"
+```
+
+## P5-6. 출력 스키마 (display-only, Phase 1 RiskOutput과 별도)
+
+```json
+{
+  "regime":       "REG-05",
+  "regime_label": "미국 경계 (US Watch)",
+  "us":  { "vix": 18.06, "vvix": 94.61, "skew": 135.50, "us_vrp": 7.01 },
+  "kr":  { "vkospi": 66.97, "kospi_hv20": 28.3, "kr_vrp": 38.67 },
+  "relationship": {
+    "vix_vkospi_spread": -48.91,
+    "hv_ratio":          1.34,
+    "vrp_divergence":    -31.66,
+    "corr_60d":          0.42,
+    "kospi_beta":        0.91
+  },
+  "triggers": { "TRG-01": false, "TRG-02": false, "TRG-03": false, "TRG-04": false },
+  "data_available": { "vkospi": true, "vvix": true, "hy_spread": true }
+}
+```
+
+> `data_available`로 부분 데이터 결손(V-KOSPI 로그인 실패, FRED 키 없음 등)을 graceful 처리 — 섹터 `data_available` 패턴과 동일.
+
+## P5-7. 파이프라인 / UI 통합 위치
+
+- **Layer 1**: `vkospi_fetcher.py` 신규 (KRX `MDCSTAT01402`) · `us_fetcher.py` 확장 (VVIX·SKEW) · `fred_fetcher.py`에 HY 스프레드 추가
+- **Layer 2**: `cross_market.py` 신규 — RI-01~RI-05 계산 (스프레드·HV비율·VRP·상관·베타)
+- **Layer 3~6**: **변경 없음** (등급 룰 미반영)
+- **pipeline**: `vol_pipeline.py::run_vol_analysis(kospi_result, us_result)` — Phase 1·3 result 두 개 입력, 독립 실행 (sector_pipeline 패턴)
+- **Layer 7**: 신규 차트 — 5분류 레짐 매트릭스(2×2+1), VIX−V-KOSPI 스프레드 추이, 한미 60일 상관 시계열, VRP 격차 게이지
+- **app**: streamlit "변동성 관계" 탭 (KOSPI/S&P 둘 다 필요 → 양 시장 스냅샷 선행)
+
+## P5-8. 알려진 미확정 / 제한
+
+| 항목 | 내용 | 비고 |
+|------|------|------|
+| `vkospi_falling_from_peak` 정의 | REG-04 판별용 — 고점 대비 하락 % / 윈도우 미확정 | 구현 시 확정 |
+| `fx_vol_spike` 정의 | TRG-01 원달러 변동성 급등 — 임계 기준 미확정 | 일간 변화 표준편차? |
+| 1년 백분위 활성화 시점 | 252일 미만이면 절대값 fallback | 데이터 축적 후 |
+| 한국 VRP 신뢰도 | V-KOSPI 옵션 유동성 부족 — 노이즈·음수 빈번 (문서 명시) | "보조 참고용" 라벨 |
+| 옵션 서피스 (한국) | 산출 불가 — 미국 VVIX·SKEW로 근사만 | 문서도 불가 명시 |
+| CBOE Put/Call | CSV 403 차단 + FRED 시리즈 없음 | 핵심 신호 불필요 → 보류 |
+| KRX 로그인 의존 | V-KOSPI는 `KRX_ID`/`KRX_PW` 필수. 미설정 시 `data_available.vkospi=false` → 한국측 지표 None | graceful degradation |
+| 포트폴리오 상관 (구 Phase 5) | 섹터간/종목간/자산군간 상관 매트릭스 — 본 프레임워크의 시장간 상관(RI-05)이 1차 버전. 섹터·종목 확장은 후속 | 별도 스코프로 보존 |
+
+---
+
+# UI 구조 — 탭 기반 재구성 (지향)
+
+> **상태**: 설계 지침. 현재는 시장 선택 라디오(KOSPI/S&P) + 세로 스크롤 단일 페이지.
+> **목표**: 상단 **탭(`st.tabs`)** 으로 영역을 분리해 한 화면에 한 주제만 보이게 한다.
+
+## 탭 구성 (안)
+
+| 탭 | 내용 | 데이터 |
+|----|------|--------|
+| **KOSPI Risk** | KOSPI 통합 리스크 — 통합 점수 게이지, 5리스크 등급, 리스크 추이(Price/HV20/MDD), 섹터 분석, KOSPI PER/PBR | `run_snapshot()` |
+| **S&P 500 Risk** | S&P 통합 리스크 — 동일 구조 (섹터 제외), S&P PER/PBR | `run_us_snapshot()` |
+| **자산배분 추천** | 전략 레벨 + 자산배분(주식/채권/현금) + 인사이트. 선택 시장 기준 또는 양 시장 병치 | 각 result `strategy`/`insights` |
+| **변동성 관계** | Phase 5 — 5분류 레짐 매트릭스, RI-01~05, VRP(내재/외재 해설), GARCH 변동성 추이, VIX−V-KOSPI 스프레드 | `run_vol_analysis()` |
+| **시장 비교** | KOSPI vs S&P 통합 점수·리스크 레이더·등급 테이블 | 양쪽 result |
+
+## 원칙
+
+- 시장 라디오 대신 **KOSPI Risk / S&P 500 Risk를 별도 탭**으로 — 두 시장을 오가지 않고 각각 전용 화면.
+- **자산배분 추천을 독립 탭**으로 승격 — 현재는 각 시장 대시보드 본문에 묻혀있음. 전략/배분/인사이트를 한 곳에 모아 "그래서 뭘 사야 하나"에 집중.
+- **변동성 관계·시장 비교는 양쪽 데이터 로드**가 필요하므로 탭 진입 시 lazy 로드 (현재 expander 패턴 유지 가능).
+- 캐싱(`@st.cache_data(ttl=3600)`)은 탭 전환 시에도 재호출 없이 재사용.
+
+## 미확정
+
+- 자산배분 탭이 **선택 시장 1개**를 보여줄지 **KOSPI·S&P 병치**할지.
+- 탭 전환 시 KOSPI 스냅샷(키움 30~60초)을 언제 로드할지 — 첫 진입 시 vs 앱 시작 시 프리로드.
+- 모바일/좁은 화면에서 탭 5개 가로 배치 가독성.
 
 ---
 

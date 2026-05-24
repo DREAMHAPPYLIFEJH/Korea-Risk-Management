@@ -42,7 +42,7 @@ For multi-step tasks, state a brief plan with verify steps.
 
 ### Source of truth
 
-- **`Skills.md` is the contract document** (v6.1). Every implementation choice traces back to a section there. Threshold values, grade boundaries, rule IDs (`CR-XX`, `OVR-XX`, `ALT-XX`, `INS-XX`), JSON field structure — all live in Skills.md. Phase 2 (섹터) / Phase 3 (S&P 500) / Phase 4 (보조 마켓 컨텍스트, 계획) 섹션도 동일 문서 안에 정식화.
+- **`Skills.md` is the contract document** (v6.1). Every implementation choice traces back to a section there. Threshold values, grade boundaries, rule IDs (`CR-XX`, `OVR-XX`, `ALT-XX`, `INS-XX`), JSON field structure — all live in Skills.md. Phase 2 (섹터) / Phase 3 (S&P 500) / Phase 4 (보조 마켓 컨텍스트 — PER/PBR 구현·나머지 계획) / Phase 5 (변동성 리스크 프레임워크 — 구현, 표시 전용) 섹션도 동일 문서 안에 정식화.
 - When implementing or modifying behavior, **cite the Skills.md section ID in the docstring** (`# Risk-A`, `# OVR-03`, `# CR-02`, etc.). Existing code follows this convention — match it.
 - `README.md` describes user-facing behavior and architecture. `preceed.md` is a chronological progress log.
 - Do not edit Skills.md or the Korean planning PDF/MD as a side-effect of code changes.
@@ -69,6 +69,7 @@ Orchestration:
 - `pipeline/orchestrator.py::run_snapshot()` — KOSPI, STEP 1→9 in order.
 - `pipeline/us_pipeline.py::run_us_snapshot()` — S&P 500 (Phase 3). 동일 키 구조 dict 반환 + `market="us"` / `fred_available` 필드. Layer 2~6 + Rules 전부 재사용; STEP 1만 `us_fetcher` + `fred_fetcher`로 교체, Risk-E만 `us_macro`로 교체. VIX는 `risk_volatility.evaluate(vkospi=vix, ...)`에 직접 전달 (KOSPI의 `vkospi=None` 보류 분기 활용).
 - `pipeline/sector_pipeline.py::run_sector_analysis(result)` — Phase 2 섹터, KOSPI 한정 보조 분석.
+- `pipeline/vol_pipeline.py::run_vol_analysis(kospi_result, us_result)` — Phase 5 한미 변동성 관계 (RI-01~05, 5분류 레짐, TRG-01~04). 표시 전용 — 통합 점수·5리스크·Override·Alert 무영향. V-KOSPI(KRX)·VVIX·SKEW를 직접 수집하고 두 result의 close/hv는 재사용.
 
 The dashboard entry point is `app/streamlit_app.py`. 헤더 아래 시장 선택 라디오로 KOSPI/S&P 500 분기 → 공통 함수 `render_market_dashboard(result, *, price_label)`로 동일 본문 렌더링. 섹터 분석은 KOSPI 한정.
 
@@ -81,7 +82,7 @@ The dashboard entry point is `app/streamlit_app.py`. 헤더 아래 시장 선택
 ### Phase 1 deliberate gaps
 
 These are **known and intentional** — do not "fix" them without confirming intent:
-- **VKOSPI is on hold** (KOSPI 측): no external data source wired yet — Phase 4 계획 §P4-1에 pykrx 도입 항목으로 등록됨. `Risk-B` computes from HV20 alone; `vkospi`/`vkospi_grade` fields serialize as `null`. CR-01's `MAX(hv_grade, vkospi_grade)` collapses to `hv_grade`. Fetcher hookup is the only thing missing — the conditional branch is already in place. (S&P 500 측은 yfinance `^VIX`를 `vkospi=` 자리에 전달하여 활성화됨.)
+- **VKOSPI is on hold *for grading*** (KOSPI 측, 의도적 결정): a V-KOSPI fetcher now exists (`layer1_data/vkospi_fetcher.py` — KRX 로그인 + `MDCSTAT01402`) and feeds **Phase 5 (display-only)**, but is **deliberately NOT wired into `Risk-B`**. By decision, V-KOSPI/VRP must not affect the 5-risk grade/score — they live only in Phase 5. So `Risk-B` still computes from HV20 alone; `vkospi`/`vkospi_grade` serialize as `null`; CR-01's `MAX(hv_grade, vkospi_grade)` collapses to `hv_grade`. The conditional branch is in place, but wiring it would flip Risk-B to Critical at current V-KOSPI levels and cascade into score/strategy/alerts — **do not wire without confirming intent**. (S&P 500 측은 yfinance `^VIX`를 `vkospi=` 자리에 전달하여 Risk-B에서 활성화됨.)
 - **No Korean exchange holiday calendar**: `pd.bdate_range` includes 5/1, 5/5, etc. The cleaner's forward-fill absorbs this.
 - **pytest is stubbed**: tests under `tests/` exist as files but coverage is inline / manual. Treat the README's "라이브 검증 결과" section as the regression baseline.
 
@@ -100,12 +101,15 @@ All commands assume the conda env `kospi_risk` (Python 3.10–3.12) is active an
 
 First run of `run_snapshot` takes 30–60s because `ka10051` (foreign net buying) loops day-by-day and hits a 429 rate limit. Streamlit caches snapshots for 1 hour via `@st.cache_data(ttl=3600)`.
 
+**Fast iteration without live APIs**: `data/demo_*.pkl` hold full `run_snapshot()` / `run_us_snapshot()` / sector results. For Phase 2/3/5 or Layer 7 viz work, `pickle.load()` these instead of the slow live snapshot — e.g. `run_vol_analysis(pickle.load(open("data/demo_kospi.pkl","rb")), pickle.load(open("data/demo_sp500.pkl","rb")))`. Regenerate via `scripts/generate_demo_data.py` when the result dict shape changes (e.g. new top-level keys). Note: `pytest tests/` exists but coverage is **inline/manual** (see Phase 1 deliberate gaps) — the README's "라이브 검증 결과" is the regression baseline.
+
 ### Environment variables (required)
 
 `.env` at repo root (gitignored). Template in `.env.example`.
 - `ECOS_API_KEY` — Bank of Korea ECOS, https://ecos.bok.or.kr/api/
 - `KIWOOM_APPKEY`, `KIWOOM_SECRETKEY` — Kiwoom Securities REST API, https://openapi.kiwoom.com
 - `FRED_API_KEY` (Phase 3, optional) — St. Louis Fed FRED, https://fredaccount.stlouisfed.org/apikey. 미설정 시 `us_pipeline`의 `fed_rate`/`cpi_yoy`/`m2_contraction`가 None → DXY 단독으로 매크로 평가 (graceful degradation).
+- `KRX_ID`, `KRX_PW` (Phase 4/5, optional) — KRX 정보데이터시스템 무료 회원 로그인. pykrx 자동 로그인에 사용 → **V-KOSPI**(Phase 5)·**KOSPI PER/PBR**(Phase 4) 조회. V-KOSPI 현물은 KRX 로그인 게이트 뒤에 있어 필수. 미설정 시 해당 지표 graceful degradation (V-KOSPI/PER/PBR None → Phase 5는 미국 단독 판정으로 대체).
 
 Also gitignored and **never to be committed**: `*appkey*.txt`, `*secretkey*.txt`, the Kiwoom PDF/XLS docs (copyright).
 
@@ -115,6 +119,7 @@ Also gitignored and **never to be committed**: `*appkey*.txt`, `*secretkey*.txt`
 - **Cite the rule ID** in docstrings: `# OVR-03 — critical_count >= 1 → 최소 Moderate_Defensive 강제`. Future readers grep for these.
 - **No new top-level files** unless the scope demands it. Adding a new risk type, indicator, or rule belongs in its layer module.
 - **Thresholds belong in `config/thresholds.py`.** Magic numbers in layer modules are a bug.
+- **Layer 7 plotly figures fail only at render, not import.** `py_compile`/import won't catch invalid props (e.g. the deprecated `titlefont` → must be `title=dict(text=, font=)`). Validate new figures headlessly with `fig.to_json()`, not just compile. When running headless tests, **don't pipe stderr to `/dev/null`** — it hides plotly errors; filter pykrx login noise with `grep -v "로그인\|시간:"` instead, and wrap stdout (`io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")`) so Korean/`−`(U+2212) prints don't crash on cp949 consoles.
 
 ---
 
@@ -164,6 +169,8 @@ Two inputs are permanently `None` in Phase 1:
 
 Both risk modules already have `if vkospi is not None:` / `if conc_ratio is not None:` guards. When hooking up a real data source, **only remove the guard and wire the value** — do not restructure the grading logic.
 
+> **참고 (Phase 5)**: V-KOSPI 데이터 소스는 이제 존재하지만(`vkospi_fetcher`), Risk-B에는 **의도적으로 연결하지 않았습니다** — `risk_volatility.evaluate(vkospi=None)` 유지. V-KOSPI는 Phase 5 표시 전용으로만 사용. 등급 반영은 별도 결정 필요 (위 "Phase 1 deliberate gaps" 참조).
+
 ### `from __future__ import annotations`
 
 All modules use this import as the first non-comment line. Include it in any new file to maintain uniform deferred annotation evaluation.
@@ -185,7 +192,17 @@ Skills.md 참조: `Phase 2 §P2-1 ~ P2-6`
 
 `series` dict도 동일 키 (`close`, `ma20/60/120`, `hv20`, `mdd60`, `mdd60_mc_p50`, `var95`, `vol_ratio`). Risk-D MC 메트릭(`mdd_60_mc`, `mdd_252_mc`, `var_95_mc`, `cvar_mc`)도 양 파이프라인 모두 wiring 완료 — `simulate_paths` + `mc_mdd_percentiles` 호출 패턴은 두 곳에서 동일.
 
-Skills.md 참조: `Phase 3 §P3-1 ~ P3-6` (P3-6에 변경 이력 정리). Phase 4 계획은 `§P4-0 ~ P4-5`.
+Skills.md 참조: `Phase 3 §P3-1 ~ P3-6` (P3-6에 변경 이력 정리). Phase 4 `§P4-0 ~ P4-5`. Phase 5 `§P5-0 ~ P5-8`.
+
+### Phase 5 vol_pipeline — 표시 전용 한미 변동성 관계
+
+`run_vol_analysis(kospi_result, us_result)`는 sector_pipeline처럼 **독립 실행 + 등급 무영향**입니다. 두 result에서 `series["close"]`/`series["hv20"]`를 추출하고, V-KOSPI(KRX)·VVIX·SKEW는 직접 수집. 산출물은 별도 dict (RI-01~05, `regime`, `triggers`, `data_available`) — Phase 1 RiskOutput 스키마와 무관.
+
+지표 계산은 `layer2_indicator/cross_market.py` (순수 함수: 스프레드·HV비율·VRP·상관·베타·레짐 분류·트리거). 임계값은 `config/thresholds.py` Phase 5 섹션. 모든 룰 ID(`RI-`, `REG-`, `TRG-`)는 Skills.md §P5 추적.
+
+**orchestrator 추가 노출** (Phase 5 TRG-01 입력): `result["foreign"]["streak_sell"]` + `result["series"]["fx_rate"]`. 둘 다 이미 계산되던 값을 dict에 노출만 한 것 — 기존 동작 무변경. 구 데모 pkl엔 없으므로 vol_pipeline은 `.get()`으로 graceful.
+
+**V-KOSPI/VRP는 Phase 5에서만 사용** — Risk-B 등급에 미반영 (위 deliberate gaps 참조). CBOE Put/Call·옵션 서피스(한국)는 데이터 부재로 미구현.
 
 ### Headless debugging without the full pipeline
 

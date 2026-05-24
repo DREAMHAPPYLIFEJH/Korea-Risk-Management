@@ -1,5 +1,5 @@
 # 데이터 수집
-pykrx>=1.0.45
+pykrx>=1.2.8         # Phase 5 — KRX 회원 로그인(KRXSession) 필요. 이 버전부터 auth 모듈 지원
 requests>=2.31.0
 python-dotenv>=1.0.0
 yfinance>=0.2.0

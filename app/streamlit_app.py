@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 # 프로젝트 루트를 sys.path에 추가 (streamlit run 시 import 안정화)
@@ -197,6 +197,22 @@ def load_us_snapshot(end_date_iso: str) -> dict:
     return run_us_snapshot(end_date=date.fromisoformat(end_date_iso))
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_kospi_fundamental(end_date_iso: str, lookback_days: int = 365):
+    """KOSPI PER/PBR (Phase 4). 자격증명 없으면 None."""
+    from layer1_data.krx_fetcher import get_kospi_fundamental
+    end = date.fromisoformat(end_date_iso)
+    start = end - timedelta(days=lookback_days)
+    return get_kospi_fundamental(start.strftime("%Y%m%d"), end.strftime("%Y%m%d"))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_sp500_fundamental():
+    """S&P 500 PER/PBR 현재값 (Phase 4, SPY ETF 근사). 실패 시 None."""
+    from layer1_data.us_fetcher import get_sp500_fundamental
+    return get_sp500_fundamental()
+
+
 # ── Alert 라벨 ────────────────────────────────────────────
 ALERT_LABELS: dict[str, str] = {
     "ALT-01": "통합 점수 급등",
@@ -234,8 +250,12 @@ def _bar_color(v: int) -> str:
     return "#10B981"
 
 
-def render_market_dashboard(result: dict, *, price_label: str = "KOSPI 종가") -> None:
-    """선택된 시장(KOSPI 또는 S&P 500) 대시보드 본체 렌더링."""
+def render_market_dashboard(result: dict, *, price_label: str = "KOSPI 종가",
+                            fundamental=None) -> None:
+    """선택된 시장(KOSPI 또는 S&P 500) 대시보드 본체 렌더링.
+
+    fundamental: KOSPI PER/PBR DataFrame (KOSPI 한정, 리스크 추이 아래 표시). None이면 생략.
+    """
     # ── Alert 영역 ─────────────────────────────────────────
     if result["alerts"]:
         for aid in result["alerts"]:
@@ -346,6 +366,34 @@ def render_market_dashboard(result: dict, *, price_label: str = "KOSPI 종가") 
                    price_label=price_label),
         use_container_width=True,
     )
+
+    # ── 밸류에이션 (PER/PBR) — 리스크 추이(MDD) 아래 (Phase 4) ──
+    is_kospi = result.get("market") != "us"
+    label = "KOSPI" if is_kospi else "S&P 500"
+    st.markdown(f'<p class="section-title">{label} 밸류에이션 (PER/PBR)</p>',
+                unsafe_allow_html=True)
+    if is_kospi:
+        # KOSPI: KRX 일별 시계열 → 메트릭 + 추이 차트
+        if fundamental is not None and not getattr(fundamental, "empty", True):
+            from layer7_visualization.fundamental_chart import make_fundamental_trend
+            latest = fundamental.iloc[-1]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("PER", f"{latest['per']:.2f}")
+            c2.metric("PBR", f"{latest['pbr']:.2f}")
+            if "div_yield" in fundamental.columns:
+                c3.metric("배당수익률", f"{latest['div_yield']:.2f}%")
+            st.plotly_chart(make_fundamental_trend(fundamental), use_container_width=True)
+        else:
+            st.caption("⚠️ KOSPI PER/PBR 미수집 — KRX_ID/KRX_PW 미설정 또는 조회 실패")
+    else:
+        # S&P 500: SPY ETF 현재값 근사 (yfinance .info — 시계열 미제공)
+        if fundamental:
+            c1, c2 = st.columns(2)
+            c1.metric("PER", f"{fundamental['per']:.2f}" if fundamental.get("per") else "-")
+            c2.metric("PBR", f"{fundamental['pbr']:.2f}" if fundamental.get("pbr") else "-")
+            st.caption("ℹ️ SPY ETF 기준 현재값 (S&P 500 지수 PER/PBR 근사) — 시계열 미제공")
+        else:
+            st.caption("⚠️ S&P 500 PER/PBR 미수집")
 
     # ── 전략·자산 배분 / 인사이트 ──────────────────────────
     col_strat, col_ins = st.columns([1, 2])
@@ -496,9 +544,12 @@ except Exception as e:
     st.error(f"파이프라인 오류: {type(e).__name__}: {e}")
     st.stop()
 
+fundamental = (load_kospi_fundamental(selected_date.isoformat())
+               if market == "KOSPI" else load_sp500_fundamental())
 render_market_dashboard(
     current,
     price_label="KOSPI 종가" if market == "KOSPI" else "S&P 500 종가",
+    fundamental=fundamental,
 )
 
 
@@ -522,18 +573,25 @@ if market == "KOSPI":
         st.warning(f"섹터 분석 오류: {type(e).__name__}: {e}")
 
 
-# ── Phase 3: KOSPI vs S&P 500 비교 (양쪽 로드 시) ─────────
+# ── Phase 3+5: KOSPI vs S&P 500 비교 + 변동성 관계 (양쪽 로드) ──
 st.markdown('<p class="section-title">KOSPI vs S&P 500 비교</p>', unsafe_allow_html=True)
 
-with st.expander("📊 시장 비교 열기 (양쪽 데이터 로드)"):
+with st.expander("📊 시장 비교 + 변동성 관계 열기 (양쪽 데이터 로드)"):
     try:
         from layer7_visualization.comparison import (
             make_comparison_gauge, make_comparison_radar, make_comparison_table,
         )
-        with st.spinner("두 시장 데이터 준비 중..."):
+        from pipeline.vol_pipeline import run_vol_analysis
+        from layer7_visualization.vol_chart import (
+            make_regime_matrix, make_relationship_table, make_spread_trend,
+            make_garch_trend,
+        )
+        with st.spinner("두 시장 데이터 준비 중... (V-KOSPI KRX 조회 포함)"):
             kospi_result = load_snapshot(selected_date.isoformat())
             us_result    = load_us_snapshot(selected_date.isoformat())
+            vol = run_vol_analysis(kospi_result, us_result)
 
+        # ── 통합 리스크 비교 ──
         col_us1, col_us2 = st.columns([1, 1])
         with col_us1:
             st.markdown("##### 통합 리스크 점수 비교")
@@ -543,12 +601,80 @@ with st.expander("📊 시장 비교 열기 (양쪽 데이터 로드)"):
             st.markdown("##### 리스크 유형별 비교")
             st.plotly_chart(make_comparison_radar(kospi_result, us_result),
                             use_container_width=True)
-
         st.markdown("##### 등급 상세 비교")
         st.plotly_chart(make_comparison_table(kospi_result, us_result),
                         use_container_width=True)
+
+        # ── 변동성 관계 분석 (Phase 5) ──
+        st.divider()
+        st.markdown("##### 🌐 변동성 관계 분석 (Phase 5)")
+        col_v1, col_v2 = st.columns([1.1, 1])
+        with col_v1:
+            st.plotly_chart(make_regime_matrix(vol), use_container_width=True)
+        with col_v2:
+            st.plotly_chart(make_relationship_table(vol), use_container_width=True)
+
+        # 미국 VRP 현재 해석 + VRP 읽는 법
+        us_vrp = vol["us"].get("us_vrp")
+        vix = vol["us"].get("vix")
+        if us_vrp is not None and vix is not None:
+            rv = vix - us_vrp   # = S&P 실현 HV20
+            if us_vrp < 0:
+                msg = "음수 — 실현변동성이 내재를 추월(패닉). 옵션 매도 전략 중단 신호"
+            elif us_vrp >= 7:
+                msg = "높음 — 옵션 시장이 실제(RV)보다 크게 경계 (헤지 수요↑)"
+            else:
+                msg = "정상 — 미국 평균(+4%p) 부근"
+            st.caption(f"미국 VRP = 내재(IV·VIX) {vix:.1f} − 외재(RV·실현 HV20) {rv:.1f} = "
+                       f"**{us_vrp:+.1f}%p** → {msg}")
+        with st.expander("💡 VRP(변동성 위험 프리미엄) 읽는 법"):
+            st.markdown(
+                "변동성에는 **두 종류**가 있습니다:\n\n"
+                "**🔵 내재 변동성 (IV) = VIX / V-KOSPI**  \n"
+                "옵션 시장이 보는, **미래에 일어날 가능성이 있는** 변동성. "
+                "*\"앞으로 이만큼 출렁일 것 같다\"*는 옵션 시장의 예상.\n\n"
+                "**🟠 외재(실현) 변동성 (RV) = HV20**  \n"
+                "**실제로 일어난** 변동성 (과거 20일 수익률의 표준편차). "
+                "GARCH(1,1) 같은 모델을 적용하면 변동성 추이를 함수로 모델링·예측할 수 있음.\n\n"
+                "**VRP = IV − RV**  \n"
+                "옵션 시장이 **실제보다 얼마나 더 불안해하는지**를 나타냅니다.\n\n"
+                "---\n"
+                "**📕 케이스 1 — RV는 낮은데 IV만 오름**  \n"
+                "RV 12%(안정) · IV(VIX) 22%(상승) → **VRP +10%p (높음)**  \n"
+                "→ *실제로는 평온한데 옵션 시장이 경계를 시작* (조기경보 성격)\n\n"
+                "**📗 케이스 2 — 둘 다 낮고 격차도 정상**  \n"
+                "RV 10% · IV 14% → **VRP +4%p (정상)**  \n"
+                "→ *진짜 안정*\n\n"
+                "※ **음수 VRP**: 외재(실현)가 내재를 추월 = 패닉. 옵션 매도 전략 중단 신호."
+            )
+
+        spread_fig = make_spread_trend(vol)
+        if spread_fig is not None:
+            st.plotly_chart(spread_fig, use_container_width=True)
+
+        garch_fig = make_garch_trend(vol)
+        if garch_fig is not None:
+            st.plotly_chart(garch_fig, use_container_width=True)
+            st.caption("외재(실현) 변동성 RV을 GARCH(1,1)로 모델링한 추이 — "
+                       "변동성 클러스터링 반영. 단순 HV20보다 매끄러운 시장 변동성 함수.")
+
+        # 핵심 신호 (TRG-01~04)
+        fired = [k for k, v in vol["triggers"].items() if v]
+        if fired:
+            st.error(f"🚨 발효 중인 핵심 신호: {', '.join(fired)}")
+        else:
+            st.success("✅ 발효 중인 핵심 신호 없음 (TRG-01~04)")
+
+        # #7 — 한국 VRP 신뢰도 경고
+        st.caption(
+            "⚠️ 한국 VRP는 V-KOSPI 옵션 유동성 부족으로 노이즈가 큽니다 — 보조 참고용. "
+            "미국 VRP를 1차 지표로 사용하세요."
+        )
+        if not vol["data_available"]["vkospi"]:
+            st.caption("⚠️ V-KOSPI 미수집 (KRX_ID/KRX_PW 미설정 또는 조회 실패) — "
+                       "한국측 지표는 미국 단독 판정으로 대체됩니다.")
     except Exception as e:
-        st.warning(f"시장 비교 오류: {type(e).__name__}: {e}")
+        st.warning(f"시장 비교 / 변동성 관계 오류: {type(e).__name__}: {e}")
 
 
 st.divider()

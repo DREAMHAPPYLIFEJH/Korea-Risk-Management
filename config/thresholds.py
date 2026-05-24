@@ -278,3 +278,59 @@ SECTOR_HV_CRITICAL   = 45    # >= 45% → Critical 보정
 # 베타 산출 롤링 윈도우 (영업일)
 SECTOR_BETA_WINDOW   = 60
 SECTOR_RS_WINDOW     = 20
+
+# ─────────────────────────────────────────────────────────────
+# Phase 5 — 변동성 리스크 프레임워크 (Skills.md §P5-3)
+# 표시 전용. 등급 영향 없음. line 번호는 volatility_risk_v2_kospi_sp500.pdf 근거.
+# ─────────────────────────────────────────────────────────────
+
+# 내재변동성 절대값 — 레짐 높음/낮음 (line 281~288)
+VIX_HIGH_ABS    = 22
+VIX_LOW_ABS     = 15
+VKOSPI_HIGH_ABS = 25
+VKOSPI_LOW_ABS  = 18
+
+# 1년 백분위 기준 (데이터 252일 이상일 때 활성화, 아니면 절대값 fallback)
+VIX_PCTL_HIGH    = 70
+VIX_PCTL_LOW     = 30
+VKOSPI_PCTL_HIGH = 70
+VKOSPI_PCTL_LOW  = 30
+
+# 2차 지표 조기경보 (line 69~70)
+VVIX_WARNING = 120   # VVIX 120+ 조기경보
+SKEW_TAIL    = 140   # SKEW 140+ 꼬리 리스크
+
+# RI-01 VIX − V-KOSPI 스프레드 (line 88~89)
+SPREAD_KR_STRESS = 8     # >= +8%p → 한국 단독 불안
+SPREAD_INVERT    = 0     # <= 0 → 역전 (이례적)
+
+# RI-02 HV 비율 KOSPI/S&P (line 122~124)
+HVRATIO_KR_SHOCK  = 1.5  # >= 1.5 → 한국 충격 진행
+HVRATIO_KR_CRISIS = 2.0  # >= 2.0 → 한국 단독 위기
+HVRATIO_US_CRISIS = 1.0  # <= 1.0 → 미국발 위기
+
+# RI-03 VRP 격차 US−KR (line 154~155)
+VRPDIV_US_WATCH = 5      # >= +5%p → 미국 경계 강화
+VRPDIV_INVERT   = 0      # <= 0 → 한국 단독 경계
+
+# RI-05 한미 상관계수·베타 (line 55~57, 236~238)
+CORR_NORMAL_HIGH = 0.5   # > 0.5 경계 시작
+CORR_SYSTEMIC    = 0.7   # > 0.7 위기 동조화 (TRG-03)
+BETA_VULNERABLE  = 1.2   # >= 1.2 취약성 확대
+BETA_DECOUPLE    = 0.7   # < 0.7 탈동조화
+
+# HY 신용 스프레드 (line 209~210)
+HY_SPREAD_WIDEN_BP = 50  # 1개월 50bp+ 확대 → 스트레스
+
+# 롤링 윈도우 (영업일)
+CORR_WINDOW = 60
+BETA_WINDOW = 60
+VOL_PCTL_WINDOW = 252    # 1년 백분위 산출 윈도우
+VKOSPI_PEAK_WINDOW = 60  # REG-04 회복 판별 lookback. V-KOSPI AR(1) 반감기 ~50일(φ≈0.99)의
+                         # 약 1.2배 — 위기 후 하락 글라이드 구간 커버 (GARCH 평균회귀 근거)
+
+# 핵심 신호 (Action Triggers, line 349~353, 384~388)
+VIX_TRIGGER     = 25     # TRG-01/02 VIX 기준
+VKOSPI_SYNC     = 30     # TRG-02 동조화 위기 V-KOSPI 기준
+VIX_NIGHT_SPIKE = 0.30   # VIX 야간 30%+ 급등
+FX_TRIGGER      = 1400   # 원/달러 1차 방어선
