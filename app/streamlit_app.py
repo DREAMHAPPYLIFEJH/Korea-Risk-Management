@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import os
+import pickle
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -35,6 +37,21 @@ from pipeline.orchestrator import run_snapshot
 from layer7_visualization.trend import make_trend
 from layer7_visualization.allocation import make_allocation
 from rules.alert import alert_level
+
+
+# ── 데모 모드 ─────────────────────────────────────────────
+# DEMO_MODE=1 환경변수가 있으면 라이브 API 대신 data/demo_*.pkl 정적 데이터 로드.
+# Streamlit Cloud(키움/KRX API 호출 불가)는 이 변수만 켜서 배포한다.
+# scripts/generate_demo_data.py 로 pkl 6개 재생성.
+DEMO_MODE = os.getenv("DEMO_MODE") == "1"
+DEMO_DIR  = ROOT / "data"
+DEMO_DATE = date(2026, 4, 30)
+
+
+@st.cache_resource(show_spinner=False)
+def _load_demo(name: str):
+    with open(DEMO_DIR / name, "rb") as f:
+        return pickle.load(f)
 
 
 st.set_page_config(
@@ -188,11 +205,15 @@ st.markdown("""
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_snapshot(end_date_iso: str, lookback_days: int = 400) -> dict:
+    if DEMO_MODE:
+        return _load_demo("demo_kospi.pkl")
     return run_snapshot(end_date=date.fromisoformat(end_date_iso), lookback_days=lookback_days)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_us_snapshot(end_date_iso: str) -> dict:
+    if DEMO_MODE:
+        return _load_demo("demo_sp500.pkl")
     from pipeline.us_pipeline import run_us_snapshot
     return run_us_snapshot(end_date=date.fromisoformat(end_date_iso))
 
@@ -200,6 +221,8 @@ def load_us_snapshot(end_date_iso: str) -> dict:
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_kospi_fundamental(end_date_iso: str, lookback_days: int = 365):
     """KOSPI PER/PBR (Phase 4). 자격증명 없으면 None."""
+    if DEMO_MODE:
+        return _load_demo("demo_kospi_fundamental.pkl")
     from layer1_data.krx_fetcher import get_kospi_fundamental
     end = date.fromisoformat(end_date_iso)
     start = end - timedelta(days=lookback_days)
@@ -209,6 +232,8 @@ def load_kospi_fundamental(end_date_iso: str, lookback_days: int = 365):
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_sp500_fundamental():
     """S&P 500 PER/PBR 현재값 (Phase 4, SPY ETF 근사). 실패 시 None."""
+    if DEMO_MODE:
+        return _load_demo("demo_sp500_fundamental.pkl")
     from layer1_data.us_fetcher import get_sp500_fundamental
     return get_sp500_fundamental()
 
@@ -509,16 +534,41 @@ def render_market_dashboard(result: dict, *, price_label: str = "KOSPI 종가",
 
 
 # ── 헤더 ──────────────────────────────────────────────────
-col_title, col_date, col_btn = st.columns([5, 2, 1])
-with col_title:
-    st.markdown('<p class="page-title">KOSPI Risk Intelligence</p>', unsafe_allow_html=True)
-    st.markdown('<p class="page-sub">통합 리스크 모니터링 대시보드</p>', unsafe_allow_html=True)
-with col_date:
-    selected_date = st.date_input("분석 기준일", value=date.today(), label_visibility="collapsed")
-with col_btn:
-    if st.button("🔄 새로고침", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
+if DEMO_MODE:
+    # 데모 모드: 기준일 고정 표시 (날짜 선택·새로고침 비활성)
+    col_title, col_date = st.columns([5, 2])
+    with col_title:
+        st.markdown('<p class="page-title">KOSPI Risk Intelligence</p>', unsafe_allow_html=True)
+        st.markdown('<p class="page-sub">통합 리스크 모니터링 대시보드</p>', unsafe_allow_html=True)
+    with col_date:
+        st.markdown(
+            f'<div style="text-align:right; padding-top:8px;">'
+            f'<span style="font-size:11px; color:#888;">분석 기준일</span><br/>'
+            f'<span style="font-size:16px; font-weight:600; color:#333;">{DEMO_DATE.strftime("%Y-%m-%d")}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    selected_date = DEMO_DATE
+    st.markdown(
+        f'<div style="background:#EFF6FF; border-left:4px solid #3B82F6; '
+        f'border-radius:0 8px 8px 0; padding:10px 14px; margin:12px 0; '
+        f'font-size:13px; color:#1E3A5F;">'
+        f'🎬 <strong>Demo Mode</strong> &middot; {DEMO_DATE.strftime("%Y-%m-%d")} KOSPI / S&amp;P 500 '
+        f'분석 결과 (라이브 API 미연동 - 정적 데이터)'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+else:
+    col_title, col_date, col_btn = st.columns([5, 2, 1])
+    with col_title:
+        st.markdown('<p class="page-title">KOSPI Risk Intelligence</p>', unsafe_allow_html=True)
+        st.markdown('<p class="page-sub">통합 리스크 모니터링 대시보드</p>', unsafe_allow_html=True)
+    with col_date:
+        selected_date = st.date_input("분석 기준일", value=date.today(), label_visibility="collapsed")
+    with col_btn:
+        if st.button("🔄 새로고침", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
 
 
 # ── 시장 선택 라디오 ──────────────────────────────────────
@@ -557,10 +607,13 @@ render_market_dashboard(
 if market == "KOSPI":
     st.markdown('<p class="section-title">섹터 리스크 분석 (Phase 2)</p>', unsafe_allow_html=True)
     try:
-        from pipeline.sector_pipeline import run_sector_analysis
         from layer7_visualization.sector_chart import make_sector_table
 
-        sector_results = run_sector_analysis(current)
+        if DEMO_MODE:
+            sector_results = _load_demo("demo_sectors.pkl")
+        else:
+            from pipeline.sector_pipeline import run_sector_analysis
+            sector_results = run_sector_analysis(current)
         st.plotly_chart(make_sector_table(sector_results), use_container_width=True)
 
         pending = [r.sector for r in sector_results if not r.data_available]
@@ -589,7 +642,8 @@ with st.expander("📊 시장 비교 + 변동성 관계 열기 (양쪽 데이터
         with st.spinner("두 시장 데이터 준비 중... (V-KOSPI KRX 조회 포함)"):
             kospi_result = load_snapshot(selected_date.isoformat())
             us_result    = load_us_snapshot(selected_date.isoformat())
-            vol = run_vol_analysis(kospi_result, us_result)
+            vol = (_load_demo("demo_vol.pkl") if DEMO_MODE
+                   else run_vol_analysis(kospi_result, us_result))
 
         # ── 통합 리스크 비교 ──
         col_us1, col_us2 = st.columns([1, 1])
